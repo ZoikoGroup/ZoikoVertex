@@ -83,4 +83,4 @@ function formatChatHistory(
   `;
 }
 
-module.exports = { formatChatHistory };
+module.exports = { escapeHtml, formatChatHistory };

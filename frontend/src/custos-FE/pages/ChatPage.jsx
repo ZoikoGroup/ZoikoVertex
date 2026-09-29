@@ -107,7 +107,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (!user?.email) return;
 
-    fetchUserSessions(user.email)
+    fetchUserSessions()
       .then((response) => setSessions(response.sessions || []))
       .catch(() => {});
   }, [setSessions, user?.email, sessionId]);
@@ -238,7 +238,8 @@ export default function ChatPage() {
           ...filePayload,
         });
 
-        if (!currentSessionId && response.sessionId) {
+        // The backend may start a fresh session if the stored one expired.
+        if (response.sessionId && response.sessionId !== currentSessionId) {
           await setSessionId(response.sessionId);
           currentSessionId = response.sessionId;
         }
@@ -293,7 +294,7 @@ export default function ChatPage() {
 
   const refreshSessions = useCallback(async () => {
     if (!user?.email) return;
-    const response = await fetchUserSessions(user.email);
+    const response = await fetchUserSessions();
     setSessions(response.sessions || []);
   }, [setSessions, user]);
 
@@ -304,7 +305,7 @@ export default function ChatPage() {
     }
 
     try {
-      const status = await fetchMailStatus(user.email);
+      const status = await fetchMailStatus();
       if (status?.allowed === false) {
         toast.error(
           `Support mail limit reached. Please try again in ${formatWaitTime(
@@ -341,7 +342,7 @@ export default function ChatPage() {
 
   const handleNewChat = useCallback(async () => {
     if (sessionId && user?.email) {
-      await endChatSession(sessionId, user.email).catch(() => {});
+      await endChatSession(sessionId).catch(() => {});
     }
 
     await setSessionId(null);

@@ -38,13 +38,23 @@ function errorHandler(error, _req, res, _next) {
   if (error.name === "SequelizeDatabaseError") {
     return res.status(400).json({
       success: false,
-      message: "Database error: " + error.message,
+      message: "Database error.",
     });
   }
 
-  return res.status(error.statusCode || 500).json({
+  if (error.type === "entity.too.large") {
+    return res.status(413).json({
+      success: false,
+      message: "Request is too large.",
+    });
+  }
+
+  // Never leak internal error details (DB, stack, provider messages) to clients.
+  const status = error.statusCode || error.status || 500;
+  const exposeMessage = error.expose || (status >= 400 && status < 500);
+  return res.status(status).json({
     success: false,
-    message: error.message || "Something went wrong.",
+    message: exposeMessage && error.message ? error.message : "Something went wrong.",
   });
 }
 

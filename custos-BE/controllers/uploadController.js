@@ -40,7 +40,9 @@ const upload = multer({
     if (ALLOWED_TYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error(`File type ${file.mimetype} is not allowed`));
+      const error = new Error("This file type is not allowed.");
+      error.statusCode = 400;
+      cb(error);
     }
   },
 });

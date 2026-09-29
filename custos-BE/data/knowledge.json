@@ -889,7 +889,7 @@
         "data rights",
         "privacy policy"
       ],
-      "route": "/privacypolicy",
+      "route": "/privacy",
       "answer_first": "GDPR, CCPA, and data subject rights are detailed in the Privacy Policy. ZoikoVertex does not provide legal advice \u2014 your legal obligations remain your responsibility."
     },
     {
@@ -902,7 +902,7 @@
         "SCC",
         "data processing addendum"
       ],
-      "route": "/dataprocessingaddendum",
+      "route": "/dpa",
       "answer_first": "The DPA, subprocessor list, and Standard Contractual Clauses are on the DPA page. For DPA negotiation or contract review, I can escalate to the Legal team."
     },
     {
@@ -915,7 +915,7 @@
         "AI governance",
         "what is responsible ai"
       ],
-      "route": "/responsibleai",
+      "route": "/responsible-ai",
       "answer_first": "ZoikoVertex's Responsible AI framework covers oversight design and Authority Layer Doctrine governance. AI operates within defined boundaries \u2014 no AI publishes without authorised human approval."
     },
     {
@@ -943,7 +943,7 @@
         "does zoikovertex guarantee compliance",
         "compliance guarantee"
       ],
-      "route": "/compliancegovernance",
+      "route": "/governance",
       "answer_first": "No. ZoikoVertex supports governance, review workflows, evidence records, auditability, and controlled execution \u2014 but customers remain responsible for their own legal, regulatory, advertising, privacy, and industry obligations. ZoikoVertex does not provide legal advice and does not guarantee regulatory compliance on your behalf."
     },
     {
@@ -971,7 +971,7 @@
         "key three",
         "what is the three key approval protocol"
       ],
-      "route": "/platform/approval-governance",
+      "route": "/approval-workflows",
       "answer_first": "The Three-Key Approval Protocol is the locked campaign release mechanism. Key One is held by the Approval Authority \u2014 this is the operational approval confirming the campaign is content-complete and operationally ready. Key Two is held by the Legal Reviewer or Compliance Reviewer \u2014 this is the governance approval confirming the campaign meets legal, regulatory, and brand compliance requirements. Key Three is held by the Executive Approver \u2014 this is the final release gate. All three keys must be granted before a campaign can proceed to the Publishing Hub. No single key holder can override the protocol."
     },
     {
@@ -1037,7 +1037,7 @@
         "PR",
         "press release"
       ],
-      "route": "/press-media",
+      "route": "/press",
       "answer_first": "Press releases and media contacts are on the Press & Media page."
     },
     {
@@ -1051,7 +1051,7 @@
         "compare",
         "how does zoikovertex compare"
       ],
-      "route": "/competitor-benchmark",
+      "route": "/competeter-benchmark",
       "answer_first": "Those are mature platforms in social management. ZoikoVertex is built for a different problem \u2014 Governed Agentic Execution\u2122."
     },
     {
@@ -1211,7 +1211,7 @@
         "how long are conversations stored",
         "when is my data deleted"
       ],
-      "route": "/privacypolicy",
+      "route": "/privacy",
       "answer_first": "ZoikoVertex retains conversation records for 90 days unless a longer period is required by a Legal Hold or regulatory obligation. Evidence Vault records are preserved according to your workspace's configured retention policy. Data deletion requests can be submitted through the process outlined in the Privacy Policy. Vertex Corporate customers can configure custom retention periods."
     },
     {
@@ -1599,15 +1599,15 @@
       "label": "Security"
     },
     {
-      "path": "/privacypolicy",
+      "path": "/privacy",
       "label": "Privacy Policy"
     },
     {
-      "path": "/dataprocessingaddendum",
+      "path": "/dpa",
       "label": "Data Processing Addendum"
     },
     {
-      "path": "/responsibleai",
+      "path": "/responsible-ai",
       "label": "Responsible AI"
     },
     {
@@ -1615,7 +1615,7 @@
       "label": "Auditability"
     },
     {
-      "path": "/compliancegovernance",
+      "path": "/governance",
       "label": "Compliance & Governance"
     },
     {
@@ -1623,15 +1623,15 @@
       "label": "Careers"
     },
     {
-      "path": "/press-media",
+      "path": "/press",
       "label": "Press & Media"
     },
     {
-      "path": "/competitor-benchmark",
+      "path": "/competeter-benchmark",
       "label": "Competitor Benchmark"
     },
     {
-      "path": "/termsofservice",
+      "path": "/terms",
       "label": "Terms of Service"
     },
     {
@@ -1643,15 +1643,15 @@
       "label": "Leadership"
     },
     {
-      "path": "/vision-mission",
+      "path": "/vision-and-mission",
       "label": "Vision and Mission"
     },
     {
-      "path": "/platform/approval-governance",
+      "path": "/approval-workflows",
       "label": "Approval & Governance"
     },
     {
-      "path": "/responsibleai",
+      "path": "/responsible-ai",
       "label": "Responsible AI"
     }
   ],

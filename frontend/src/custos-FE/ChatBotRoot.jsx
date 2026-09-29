@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import ChatPage from "./pages/ChatPage";
-import { verifyUser, fetchHistory } from "./services/api";
+import { verifyUser, fetchHistory, getAuthToken } from "./services/api";
 import { useStore } from "./store/useStore";
 
 const ACCESS_DENIED_MESSAGE = "You do not have access to that conversation.";
@@ -84,8 +84,9 @@ export default function ChatBotRoot() {
   useEffect(() => {
     if (!hydrated || bootstrapAttemptedRef.current) return;
 
+    // A stored session is only usable with a Custos token; otherwise re-verify.
     const hasSession = Boolean(user?.email && sessionId);
-    if (hasSession) {
+    if (hasSession && getAuthToken()) {
       setBootstrapComplete(true);
       return;
     }

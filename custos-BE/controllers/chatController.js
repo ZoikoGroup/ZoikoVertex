@@ -4,6 +4,7 @@ const {
   deleteConversation,
   endConversation,
   generateHybridReply,
+  getConversationOwner,
   handleHumanHandoff,
   getChatContext,
   getUnknownPrompts,
@@ -12,6 +13,35 @@ const {
   saveMessage,
   trackUnknownPrompt,
 } = require("../services/chatService");
+
+const MAX_MESSAGE_LENGTH = 2000;
+const ACCESS_DENIED_MESSAGE = "You do not have access to that conversation.";
+
+// The verified email from the Custos token always wins; name/company from the
+// body are display-only.
+function resolveUser(req) {
+  const bodyUser = req.body?.user || {};
+  return {
+    name: String(bodyUser.name || "").slice(0, 120),
+    company: String(bodyUser.company || "").slice(0, 120),
+    email: req.chatUser.email,
+  };
+}
+
+// "ok" = caller owns it, "missing" = unknown session, "forbidden" = someone else's.
+async function checkSessionAccess(sessionId, email) {
+  const owner = await getConversationOwner(sessionId);
+  if (!owner) return "missing";
+  return owner.toLowerCase() === email ? "ok" : "forbidden";
+}
+
+function denyAccess(res) {
+  return res.status(403).json({
+    success: false,
+    code: "ACCESS_DENIED",
+    message: ACCESS_DENIED_MESSAGE,
+  });
+}
 
 // 🔥 MAIN CHAT FUNCTION
 async function sendChatMessage(req, res, next) {
@@ -24,7 +54,19 @@ async function sendChatMessage(req, res, next) {
       });
     }
 
-    let { sessionId, message, user, language = "en", fileUrl, fileName, fileType } = req.body;
+    let { sessionId, message, language = "en", fileUrl, fileName, fileType } = req.body;
+    const user = resolveUser(req);
+
+    if (typeof message === "string" && message.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Message is too long. Please keep it under ${MAX_MESSAGE_LENGTH} characters.`,
+      });
+    }
+
+    if (fileUrl && !/^\/uploads\/[\w.-]+$/.test(String(fileUrl))) {
+      return res.status(400).json({ success: false, message: "Invalid file reference." });
+    }
 
     // ✅ prevent empty messages (allow file-only messages)
     if ((!message || !message.trim()) && !fileUrl) {
@@ -38,6 +80,13 @@ async function sendChatMessage(req, res, next) {
     if (!["en", "hi"].includes(language)) {
       console.log("⚠️ Invalid language:", language);
       language = "en";
+    }
+
+    if (sessionId) {
+      const access = await checkSessionAccess(sessionId, user.email);
+      if (access === "forbidden") return denyAccess(res);
+      // Unknown/expired session ids are never reused — start a fresh one.
+      if (access === "missing") sessionId = null;
     }
 
     // 🔥 CREATE SESSION ONLY WHEN FIRST MESSAGE COMES
@@ -55,7 +104,7 @@ async function sendChatMessage(req, res, next) {
     await saveMessage({
       sessionId,
       user,
-      userEmail: user?.email || "unknown@local",
+      userEmail: user.email,
       role: "user",
       content: (message || "").trim(),
       metadata,
@@ -106,7 +155,7 @@ async function sendChatMessage(req, res, next) {
     await saveMessage({
       sessionId,
       user,
-      userEmail: user?.email || "unknown@local",
+      userEmail: user.email,
       role: "assistant",
       content: reply.answer,
       metadata: assistantMeta,
@@ -139,7 +188,11 @@ async function getTrackedPrompts(_req, res, next) {
 // 🔹 GET CHAT HISTORY
 async function getChatHistory(req, res, next) {
   try {
-    const messages = await getSessionHistory(req.params.sessionId);
+    const access = await checkSessionAccess(req.params.sessionId, req.chatUser.email);
+    if (access === "forbidden") return denyAccess(res);
+
+    const messages =
+      access === "ok" ? await getSessionHistory(req.params.sessionId) : [];
     const context = getChatContext();
 
     return res.json({
@@ -176,15 +229,7 @@ function getChatUiContext(_req, res, next) {
 // 🔹 GET USER SESSIONS
 async function getUserSessions(req, res, next) {
   try {
-    const email = (req.query.email || "").toLowerCase().trim();
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required.",
-      });
-    }
-
-    const sessions = await listUserConversations(email);
+    const sessions = await listUserConversations(req.chatUser.email);
     return res.json({ success: true, sessions });
   } catch (error) {
     next(error);
@@ -194,15 +239,7 @@ async function getUserSessions(req, res, next) {
 // 🔹 CREATE SESSION (optional endpoint)
 async function createSession(req, res, next) {
   try {
-    const { user } = req.body;
-    if (!user?.email) {
-      return res.status(400).json({
-        success: false,
-        message: "User details are required.",
-      });
-    }
-
-    const session = await createConversationForUser(user);
+    const session = await createConversationForUser(resolveUser(req));
     return res.json({
       success: true,
       session,
@@ -215,11 +252,11 @@ async function createSession(req, res, next) {
 // 🔹 END SESSION
 async function closeSession(req, res, next) {
   try {
-    const { userEmail } = req.body;
-    await endConversation(
-      req.params.sessionId,
-      userEmail?.toLowerCase().trim(),
-    );
+    const access = await checkSessionAccess(req.params.sessionId, req.chatUser.email);
+    if (access === "forbidden") return denyAccess(res);
+    if (access === "ok") {
+      await endConversation(req.params.sessionId, req.chatUser.email);
+    }
     return res.json({ success: true });
   } catch (error) {
     next(error);
@@ -229,8 +266,11 @@ async function closeSession(req, res, next) {
 // 🔹 DELETE SESSION
 async function removeSession(req, res, next) {
   try {
-    const userEmail = (req.query.userEmail || "").toLowerCase().trim();
-    await deleteConversation(req.params.sessionId, userEmail || undefined);
+    const access = await checkSessionAccess(req.params.sessionId, req.chatUser.email);
+    if (access === "forbidden") return denyAccess(res);
+    if (access === "ok") {
+      await deleteConversation(req.params.sessionId, req.chatUser.email);
+    }
     return res.json({ success: true });
   } catch (error) {
     next(error);
@@ -239,21 +279,40 @@ async function removeSession(req, res, next) {
 
 async function requestHumanHandoff(req, res, next) {
   try {
-    const { sessionId, message, user } = req.body;
+    let { sessionId, message } = req.body;
+    const user = resolveUser(req);
 
-    if (!message || !message.trim()) {
+    if (!message || typeof message !== "string" || !message.trim()) {
       return res.status(400).json({
         success: false,
         message: "Message is required for handoff.",
       });
     }
 
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Message is too long. Please keep it under ${MAX_MESSAGE_LENGTH} characters.`,
+      });
+    }
+
+    if (sessionId) {
+      const access = await checkSessionAccess(sessionId, user.email);
+      if (access === "forbidden") return denyAccess(res);
+      if (access === "missing") sessionId = null;
+    }
+
     const reply = await handleHumanHandoff({ user, message, sessionId });
 
+    // Only persist into a conversation the caller owns — never a shared bucket.
+    if (!sessionId) {
+      return res.json({ success: true, sessionId: null, message: reply });
+    }
+
     await saveMessage({
-      sessionId: sessionId || "handoff-direct",
+      sessionId,
       user,
-      userEmail: user?.email || "unknown@local",
+      userEmail: user.email,
       role: "assistant",
       content: reply.answer,
       metadata: {

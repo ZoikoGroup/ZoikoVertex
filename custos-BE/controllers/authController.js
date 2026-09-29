@@ -1,5 +1,5 @@
-const { validationResult } = require("express-validator");
-const jwt = require("jsonwebtoken");
+const { supabase } = require("../config/db");
+const { readBearerToken, signChatToken } = require("../middlewares/auth");
 const User = require("../models/User");
 const {
   createEmployeeId,
@@ -8,22 +8,36 @@ const {
 
 async function verifyEmployee(req, res, next) {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
+    // The email must come from a verified ZoikoVertex (Supabase) session, never
+    // from the request body — otherwise anyone could claim any identity.
+    const accessToken = readBearerToken(req) || req.body.accessToken;
+    if (!accessToken || !supabase) {
+      return res.status(401).json({
         success: false,
-        message: errors.array()[0].msg,
+        code: "AUTH_REQUIRED",
+        message: "Please sign in to ZoikoVertex to use the assistant.",
       });
     }
 
-    const { name, email, company } = req.body;
-    const normalizedEmail = email.toLowerCase().trim();
+    const { data, error: authError } = await supabase.auth.getUser(accessToken);
+    const verifiedEmail = data?.user?.email;
+    if (authError || !verifiedEmail) {
+      return res.status(401).json({
+        success: false,
+        code: "AUTH_INVALID",
+        message: "Your ZoikoVertex session has expired. Please sign in again.",
+      });
+    }
+
+    const normalizedEmail = verifiedEmail.toLowerCase().trim();
+    const name = String(req.body.name || normalizedEmail.split("@")[0]).trim().slice(0, 120);
+    const company = String(req.body.company || "ZoikoVertex").trim().slice(0, 120);
     const employeeId = createEmployeeId(company, normalizedEmail);
 
     let userPayload = {
-      name: name.trim(),
+      name,
       email: normalizedEmail,
-      company: company.trim(),
+      company,
       employeeId,
     };
 
@@ -56,14 +70,7 @@ async function verifyEmployee(req, res, next) {
       );
     }
 
-    const token = jwt.sign(
-      {
-        email: userPayload.email,
-        sessionId: activeConversation.sessionId,
-      },
-      process.env.JWT_SECRET || "development-secret",
-      { expiresIn: "7d" },
-    );
+    const token = signChatToken({ email: userPayload.email });
 
     return res.json({
       success: true,

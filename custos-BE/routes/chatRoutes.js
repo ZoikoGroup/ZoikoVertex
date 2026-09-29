@@ -1,5 +1,4 @@
 const { Router } = require("express");
-const { body } = require("express-validator");
 const {
   closeSession,
   createSession,
@@ -11,26 +10,24 @@ const {
   requestHumanHandoff,
   sendChatMessage,
 } = require("../controllers/chatController");
-const { chatRateLimiter } = require("../middlewares/rateLimiter");
+const { requireAdmin, requireChatUser } = require("../middlewares/auth");
+const {
+  chatRateLimiter,
+  createIpRateLimiter,
+} = require("../middlewares/rateLimiter");
 
 const router = Router();
+const handoffRateLimiter = createIpRateLimiter({ points: 5, duration: 600 });
 
-router.post(
-  "/",
-  chatRateLimiter,
-  [
-    body("user.email").isEmail().withMessage("Valid email required"),
-  ],
-  sendChatMessage,
-);
+router.post("/", chatRateLimiter, requireChatUser, sendChatMessage);
 
 router.get("/context", getChatUiContext);
-router.get("/sessions", getUserSessions);
-router.get("/new-prompts", getTrackedPrompts);
-router.post("/sessions", createSession);
-router.patch("/sessions/:sessionId/end", closeSession);
-router.delete("/sessions/:sessionId", removeSession);
-router.get("/history/:sessionId", getChatHistory);
-router.post("/handoff", requestHumanHandoff);
+router.get("/sessions", requireChatUser, getUserSessions);
+router.get("/new-prompts", requireAdmin, getTrackedPrompts);
+router.post("/sessions", requireChatUser, createSession);
+router.patch("/sessions/:sessionId/end", requireChatUser, closeSession);
+router.delete("/sessions/:sessionId", requireChatUser, removeSession);
+router.get("/history/:sessionId", requireChatUser, getChatHistory);
+router.post("/handoff", handoffRateLimiter, requireChatUser, requestHumanHandoff);
 
 module.exports = router;

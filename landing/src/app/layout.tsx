@@ -7,6 +7,7 @@ import {
 import { Providers } from "./providers";
 import Navbar from "@/components/navbar/Navbar";
 import Footer from "@/components/footer/Footer";
+import CustosWidget from "@/components/custos/CustosWidget";
 import Script from "next/script";
 import "./globals.css";
 
@@ -478,6 +479,7 @@ export default function RootLayout({
           <Navbar />
           {children}
           <Footer />
+          <CustosWidget />
         </Providers>
       </body>
     </html>

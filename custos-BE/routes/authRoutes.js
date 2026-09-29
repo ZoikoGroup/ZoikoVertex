@@ -1,17 +1,11 @@
 const { Router } = require("express");
-const { body } = require("express-validator");
 const { verifyEmployee } = require("../controllers/authController");
+const { createIpRateLimiter } = require("../middlewares/rateLimiter");
 
 const router = Router();
 
-router.post(
-  "/verify",
-  [
-    body("name").trim().notEmpty().withMessage("Name is required."),
-    body("email").isEmail().withMessage("A valid work email is required."),
-    body("company").trim().notEmpty().withMessage("Company is required."),
-  ],
-  verifyEmployee,
-);
+// Identity is taken from the Supabase access token (Authorization: Bearer ...),
+// so name/company in the body are display-only and not validated as identity.
+router.post("/verify", createIpRateLimiter({ points: 20, duration: 60 }), verifyEmployee);
 
 module.exports = router;
