@@ -1,24 +1,43 @@
 const { RateLimiterMemory } = require("rate-limiter-flexible");
 const { supabase } = require("../config/db");
 
-// ─── Chat Rate Limiter (20 requests per 60 seconds per IP) ───────────────────
-const rateLimiter = new RateLimiterMemory({
-  points: 20,
-  duration: 60,
-});
+// ─── Per-IP limiters ─────────────────────────────────────────────────────────
+// req.ip is the real client address only because server.js sets "trust proxy".
+function createIpRateLimiter({ points, duration }) {
+  const limiter = new RateLimiterMemory({ points, duration });
 
-async function chatRateLimiter(req, res, next) {
-  try {
-    const key = req.ip || req.headers["x-forwarded-for"] || "local";
-    await rateLimiter.consume(key);
-    next();
-  } catch (_error) {
-    res.status(429).json({
-      success: false,
-      message: "Too many requests. Please wait a moment and try again.",
-    });
-  }
+  return async function ipRateLimiter(req, res, next) {
+    try {
+      await limiter.consume(req.ip || "local");
+      next();
+    } catch (_error) {
+      res.status(429).json({
+        success: false,
+        message: "Too many requests. Please wait a moment and try again.",
+      });
+    }
+  };
 }
+
+// Per public visitor token, on top of the per-IP limit.
+function createVisitorRateLimiter({ points, duration }) {
+  const limiter = new RateLimiterMemory({ points, duration });
+
+  return async function visitorRateLimiter(req, res, next) {
+    try {
+      await limiter.consume(req.visitor?.visitorId || req.ip || "local");
+      next();
+    } catch (_error) {
+      res.status(429).json({
+        success: false,
+        message: "You're sending messages quickly. Please wait a moment and try again.",
+      });
+    }
+  };
+}
+
+// Chat: 20 requests per 60 seconds per IP
+const chatRateLimiter = createIpRateLimiter({ points: 20, duration: 60 });
 
 // ─── Email Rate Limiter using Supabase (persists across server restarts) ──────
 const EMAIL_LIMIT = 5;
@@ -74,7 +93,8 @@ async function getMailLimitStatus(key) {
 }
 
 async function mailRateLimiter(req, res, next) {
-  const key = req.body?.user?.email || req.ip || "local";
+  // Keyed on the verified token identity — the body's user.email is untrusted.
+  const key = req.chatUser?.email || req.ip || "local";
 
   try {
     const now = new Date();
@@ -130,4 +150,10 @@ async function mailRateLimiter(req, res, next) {
   }
 }
 
-module.exports = { chatRateLimiter, mailRateLimiter, getMailLimitStatus };
+module.exports = {
+  chatRateLimiter,
+  createIpRateLimiter,
+  createVisitorRateLimiter,
+  mailRateLimiter,
+  getMailLimitStatus,
+};

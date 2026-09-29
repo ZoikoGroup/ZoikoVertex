@@ -9,7 +9,7 @@ import {
   savePrefs,
   saveSession,
 } from "../services/desktop";
-import { fetchHistory } from "../services/api";
+import { clearAuthToken, fetchHistory } from "../services/api";
 
 const defaultAssistantContext = {
   assistantName: "Custos",
@@ -280,6 +280,7 @@ export const useStore = create((set, get) => ({
       saveDraft(get().user);
     }
     await clearSession();
+    clearAuthToken();
     // ─── FIX: clear mailSent from localStorage on logout ─────────────────
     persistMailSent(false);
     set({

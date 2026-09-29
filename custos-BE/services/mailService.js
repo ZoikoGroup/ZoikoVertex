@@ -1,6 +1,7 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const nodemailer = require("nodemailer");
+const { escapeHtml } = require("../utils/formatChatHistory");
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -21,13 +22,15 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   console.warn("⚠️  SMTP not configured — emails will not be sent");
 }
 
-const sendMail = async ({ to, from, subject, body, html }) => {
+// Mail is always sent from FROM_EMAIL. A user's address may only be used as
+// replyTo — sending "from" an unverified user address is spoofing.
+const sendMail = async ({ to, replyTo, subject, body, html }) => {
   if (!to || !subject) throw new Error("Missing required fields: to, subject");
   if (!emailRegex.test(to)) throw new Error("Invalid recipient email");
-  if (from && !emailRegex.test(from)) throw new Error("Invalid sender email");
+  if (replyTo && !emailRegex.test(replyTo)) throw new Error("Invalid reply-to email");
 
-  const fromAddress = process.env.FROM_EMAIL || from;
-  if (!fromAddress) throw new Error("No sender email configured and no 'from' provided");
+  const fromAddress = process.env.FROM_EMAIL;
+  if (!fromAddress) throw new Error("FROM_EMAIL is not configured");
   if (!transporter) throw new Error("Mail service not configured (missing SMTP credentials)");
 
   const textBody = body || "User has reported an issue. Please view this email in HTML format.";
@@ -35,13 +38,13 @@ const sendMail = async ({ to, from, subject, body, html }) => {
     html ||
     `<div style="font-family: Arial; padding: 10px;">
       <h3>User Issue</h3>
-      <p>${textBody.replace(/\n/g, "<br/>")}</p>
+      <p>${escapeHtml(textBody).replace(/\n/g, "<br/>")}</p>
     </div>`;
 
   await transporter.sendMail({
     from: fromAddress,
     to,
-    replyTo: from || fromAddress,
+    replyTo: replyTo || fromAddress,
     subject,
     text: textBody,
     html: htmlBody,

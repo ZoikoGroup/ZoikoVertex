@@ -58,7 +58,7 @@ export default function MailResponse({ theme, onClose }) {
       }
 
       try {
-        const data = await fetchMailStatus(user.email);
+        const data = await fetchMailStatus();
         if (!active) return;
 
         const waitText = data?.msBeforeNextReset

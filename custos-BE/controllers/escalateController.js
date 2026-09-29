@@ -13,6 +13,20 @@ async function escalateIssue(req, res) {
       });
     }
 
+    if (
+      typeof contactEmail !== "string" ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) ||
+      contactEmail.length > 254 ||
+      String(issueSummary).length > 2000 ||
+      String(name || "").length > 120 ||
+      String(company || "").length > 120
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid email and keep your details brief.",
+      });
+    }
+
     const validCategories = ["SALES", "LEGAL", "SECURITY", "BILLING", "SUPPORT"];
     if (!validCategories.includes(category.toUpperCase())) {
       return res.status(400).json({
@@ -58,7 +72,6 @@ async function escalateIssue(req, res) {
       success: true,
       escalationId: escalation.id,
       message: `Your enquiry has been routed to the ${teamNames[category.toUpperCase()] || "relevant"} team. They will respond ${responseTimeframe}.`,
-      escalation,
     });
   } catch (error) {
     console.error("[EscalateController] Error:", error.message);

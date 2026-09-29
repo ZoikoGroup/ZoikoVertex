@@ -8,9 +8,91 @@ const api = axios.create({
   timeout: 10000,
 });
 
+// ─── Custos auth token ───────────────────────────────────────────────────────
+// custos-BE derives identity from this token only, never from user.email in
+// the request body. It is issued by /auth/verify in exchange for the signed-in
+// ZoikoVertex (Supabase) access token.
+const TOKEN_KEY = "zt-chatbot-token";
+
+export function getAuthToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setAuthToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function clearAuthToken() {
+  setAuthToken(null);
+}
+
+async function getSupabaseAccessToken() {
+  try {
+    const { supabase } = await import("../../lib/supabase");
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token && !config.headers.Authorization) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// On an expired/invalid Custos token, re-verify once with the current
+// Supabase session and retry the original request.
+api.interceptors.response.use(undefined, async (error) => {
+  const original = error.config;
+  const isAuthError = error.response?.status === 401;
+  const isVerifyCall = original?.url?.includes("/auth/verify");
+
+  if (!isAuthError || isVerifyCall || !original || original._custosRetried) {
+    throw error;
+  }
+
+  original._custosRetried = true;
+  clearAuthToken();
+
+  const accessToken = await getSupabaseAccessToken();
+  if (!accessToken) throw error;
+
+  const { data } = await api.post(
+    "/auth/verify",
+    {},
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  setAuthToken(data?.token);
+  original.headers.Authorization = `Bearer ${data?.token}`;
+  return api(original);
+});
+
 // AUTH
-export async function verifyUser(payload) {
-  const { data } = await api.post("/auth/verify", payload);
+// payload: { name, company } are display-only; identity comes from the
+// Supabase access token.
+export async function verifyUser(payload = {}) {
+  const accessToken = await getSupabaseAccessToken();
+  const { data } = await api.post(
+    "/auth/verify",
+    { name: payload.name, company: payload.company },
+    accessToken
+      ? { headers: { Authorization: `Bearer ${accessToken}` } }
+      : undefined,
+  );
+  setAuthToken(data?.token);
   return data;
 }
 
@@ -25,10 +107,8 @@ export async function fetchHistory(sessionId) {
   return data;
 }
 
-export async function fetchUserSessions(email) {
-  const { data } = await api.get("/chat/sessions", {
-    params: { email },
-  });
+export async function fetchUserSessions() {
+  const { data } = await api.get("/chat/sessions");
 
   return {
     ...data,
@@ -37,33 +117,27 @@ export async function fetchUserSessions(email) {
 }
 
 // SESSION MANAGEMENT
-export async function endChatSession(sessionId, userEmail) {
-  const { data } = await api.patch(`/chat/sessions/${sessionId}/end`, {
-    userEmail,
-  });
+export async function endChatSession(sessionId) {
+  const { data } = await api.patch(`/chat/sessions/${sessionId}/end`);
   return data;
 }
 
-export async function deleteChatSession(sessionId, userEmail) {
-  const { data } = await api.delete(`/chat/sessions/${sessionId}`, {
-    params: { userEmail },
-  });
+export async function deleteChatSession(sessionId) {
+  const { data } = await api.delete(`/chat/sessions/${sessionId}`);
   return data;
 }
 
 // MAIL
-// Backend keys rate limit by user.email — always include it.
-// Backend builds the HTML itself from sessionId, so we only send metadata.
-export async function sendMail({ sessionId, user, to, subject, body }) {
+// The backend always sends to the support mailbox and rate-limits by the
+// verified token identity; it builds the HTML itself from sessionId.
+export async function sendMail({ sessionId, user, subject, body }) {
   const { data } = await api.post(
     "/mail/send",
     {
       sessionId,
       user,
-      to,
       subject,
       body,
-      email: user?.email, // explicit top-level key for rate limiter middleware
     },
     {
       timeout: 30000,
@@ -72,10 +146,8 @@ export async function sendMail({ sessionId, user, to, subject, body }) {
   return data;
 }
 
-export async function fetchMailStatus(email) {
-  const { data } = await api.get("/mail/status", {
-    params: { email },
-  });
+export async function fetchMailStatus() {
+  const { data } = await api.get("/mail/status");
   return data;
 }
 

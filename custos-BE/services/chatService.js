@@ -9,6 +9,7 @@ const {
   createHandoffTicket,
   getHandoffResponse,
 } = require("./handoffService");
+const { createGuardrails } = require("./guardrails");
 
 // FIXED: Point to correct knowledge.json location (root, not /data)
 const knowledgePath = path.resolve(__dirname, "..", "data", "knowledge.json");
@@ -163,6 +164,62 @@ const defaultSuggestions = Array.isArray(knowledgeDocument.default_suggestions)
   : intents.slice(0, 6).map((intent) => intent.label || intent.question);
 
 
+// ─── Surface knowledge indexes ───────────────────────────────────────────────
+// PUBLIC_WEB may only use entries listed in data/publicKnowledge.json
+// (default-deny). Anything not allowlisted is technically ineligible for
+// retrieval on the public website (ZV-WEBCHAT-REQ-001 WEB-INT-004).
+let publicKnowledge = { intents: [], faq: [] };
+try {
+  publicKnowledge = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, "..", "data", "publicKnowledge.json"), "utf-8"),
+  );
+} catch (e) {
+  console.error("❌ Failed to load publicKnowledge.json — public mode has no knowledge:", e.message);
+}
+
+function buildKnowledgeIndex({ intentIds, faqQuestions } = {}) {
+  const allowIntent = (id) => !intentIds || intentIds.has(id);
+  const scopedIntents = intents.filter((intent) => allowIntent(intent.id));
+  const scopedRawIntents = (knowledgeDocument.intents || []).filter((intent) =>
+    allowIntent(intent.id || slugify(extractQuestion(intent))),
+  );
+  const scopedFaq = (knowledgeDocument.faq || []).filter(
+    (entry) => !faqQuestions || faqQuestions.has(entry.q),
+  );
+  const scopedSuggestions = defaultSuggestions.filter((label) =>
+    scopedIntents.some((intent) => intent.question === label),
+  );
+
+  const triggerPhrases = new Set();
+  for (const intent of scopedRawIntents) {
+    for (const phrase of [...(intent.trigger_signals || []), ...(intent.keywords || []), intent.label]) {
+      const normalized = normalizeText(String(phrase || ""));
+      if (normalized.length >= 2) triggerPhrases.add(normalized);
+    }
+  }
+
+  return {
+    intents: scopedIntents,
+    rawIntents: scopedRawIntents,
+    triggerPhrases: [...triggerPhrases],
+    faq: scopedFaq,
+    defaultSuggestions:
+      scopedSuggestions.length > 0
+        ? scopedSuggestions
+        : scopedIntents.slice(0, 6).map((intent) => intent.question),
+  };
+}
+
+const knowledgeIndexes = {
+  platform: buildKnowledgeIndex(),
+  public: buildKnowledgeIndex({
+    intentIds: new Set(publicKnowledge.intents || []),
+    faqQuestions: new Set(publicKnowledge.faq || []),
+  }),
+};
+
+const guardrails = createGuardrails(knowledgeDocument);
+
 const quickActions = Array.isArray(knowledgeDocument.search_redirects)
   ? knowledgeDocument.search_redirects.slice(0, 6).map((item) => ({
       id: item.id,
@@ -255,7 +312,7 @@ function scoreEntry(message, entry) {
   return score;
 }
 
-function buildFallbackAnswer(language = "en") {
+function buildFallbackAnswer(language = "en", kb = knowledgeIndexes.platform) {
   const fallbackSource =
     knowledgeDocument.fallback ||
     knowledgeDocument.templates?.fallback ||
@@ -265,7 +322,7 @@ function buildFallbackAnswer(language = "en") {
     answer: personalizeText(fallbackSource),
     matchedQuestion: "Fallback response",
     confidence: 0.24,
-    suggestions: defaultSuggestions.slice(0, 3),
+    suggestions: kb.defaultSuggestions.slice(0, 3),
     route: null,
     intent: "fallback",
     timestamp: new Date().toISOString(),
@@ -573,6 +630,28 @@ async function deleteConversation(sessionId, userEmail) {
   } catch (_error) {}
 }
 
+// Returns the owning email for a session, or null if the session is unknown.
+async function getConversationOwner(sessionId) {
+  if (!sessionId) return null;
+
+  const memoryConversation = getInMemoryConversation(sessionId);
+  if (memoryConversation?.userEmail) return memoryConversation.userEmail;
+
+  try {
+    if (!supabase) return null;
+
+    const { data } = await supabase
+      .from("conversations")
+      .select("user_email")
+      .eq("session_id", sessionId)
+      .maybeSingle();
+
+    return data?.user_email || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function listUserConversations(userEmail) {
   const now = Date.now();
   const memoryConversations = [...inMemoryConversations.values()]
@@ -620,7 +699,7 @@ async function listUserConversations(userEmail) {
   return memoryConversations;
 }
 
-function generateChatReply(message, language = "en") {
+function generateChatReply(message, language = "en", kb = knowledgeIndexes.platform) {
   const normalizedMessage = normalizeText(message);
 
   // 1. Greeting / salutation detection (before scoring loop)
@@ -634,7 +713,7 @@ function generateChatReply(message, language = "en") {
       answer: personalizeText(greetingText),
       matchedQuestion: "Greeting",
       confidence: 0.99,
-      suggestions: defaultSuggestions.slice(0, 6),
+      suggestions: kb.defaultSuggestions.slice(0, 6),
       route: null,
       intent: "greeting",
       timestamp: new Date().toISOString(),
@@ -652,7 +731,7 @@ function generateChatReply(message, language = "en") {
       answer: personalizeText(menuText),
       matchedQuestion: "Main menu",
       confidence: 0.99,
-      suggestions: defaultSuggestions.slice(0, 6),
+      suggestions: kb.defaultSuggestions.slice(0, 6),
       route: null,
       intent: "menu",
       timestamp: new Date().toISOString(),
@@ -668,7 +747,7 @@ function generateChatReply(message, language = "en") {
       ),
       matchedQuestion: "Capabilities overview",
       confidence: 0.99,
-      suggestions: defaultSuggestions.slice(0, 6),
+      suggestions: kb.defaultSuggestions.slice(0, 6),
       route: null,
       intent: "capabilities",
       timestamp: new Date().toISOString(),
@@ -696,7 +775,7 @@ function generateChatReply(message, language = "en") {
       answer: "Sure — please rephrase your question and I'll try again.",
       matchedQuestion: "Rephrase request",
       confidence: 0.99,
-      suggestions: defaultSuggestions.slice(0, 6),
+      suggestions: kb.defaultSuggestions.slice(0, 6),
       route: null,
       intent: "rephrase",
       timestamp: new Date().toISOString(),
@@ -712,7 +791,7 @@ function generateChatReply(message, language = "en") {
       answer: personalizeText(goodbyeText),
       matchedQuestion: "Goodbye",
       confidence: 0.99,
-      suggestions: defaultSuggestions.slice(0, 6),
+      suggestions: kb.defaultSuggestions.slice(0, 6),
       route: null,
       intent: "goodbye",
       timestamp: new Date().toISOString(),
@@ -733,7 +812,7 @@ function generateChatReply(message, language = "en") {
       answer: personalizeText(emailManagerPrompt.response),
       matchedQuestion: "Email manager",
       confidence: 0.98,
-      suggestions: defaultSuggestions.slice(0, 3),
+      suggestions: kb.defaultSuggestions.slice(0, 3),
       route: null,
       intent: "email_manager",
       timestamp: new Date().toISOString(),
@@ -741,14 +820,14 @@ function generateChatReply(message, language = "en") {
   }
 
   // 4. Full-question match against FAQ titles
-  const faqMatch = findFaqMatch(message);
+  const faqMatch = findFaqMatch(message, kb.faq);
   if (faqMatch) {
     return {
       id: uuidv4(),
       answer: personalizeText(faqMatch.a),
       matchedQuestion: faqMatch.q,
       confidence: 0.9,
-      suggestions: defaultSuggestions.slice(0, 6),
+      suggestions: kb.defaultSuggestions.slice(0, 6),
       route: null,
       intent: "faq",
       timestamp: new Date().toISOString(),
@@ -756,16 +835,16 @@ function generateChatReply(message, language = "en") {
   }
 
   // 5. Score-based intent matching
-  const ranked = intents
+  const ranked = kb.intents
     .map((entry) => ({ ...entry, score: scoreEntry(message, entry) }))
     .sort((a, b) => b.score - a.score);
   const bestMatch = ranked[0];
 
-  if (!bestMatch || bestMatch.score < 1.5) return buildFallbackAnswer(language);
+  if (!bestMatch || bestMatch.score < 1.5) return buildFallbackAnswer(language, kb);
 
   const confidence = Math.min(0.99, Number((bestMatch.score / 16).toFixed(2)));
 
-  const originalIntent = knowledgeDocument.intents.find(
+  const originalIntent = kb.rawIntents.find(
     (intent) =>
       (intent.id || slugify(extractQuestion(intent))) === bestMatch.id,
   );
@@ -831,15 +910,42 @@ function matchWebsiteUrl(message) {
   return null;
 }
 
+// Product-specific terms. A single generic word ("social", "media", "job",
+// "link") is not enough to treat a message as being about ZoikoVertex.
+const STRONG_ZOIKOVERTEX_TERMS = new Set([
+  "zoikovertex", "vertex", "custos", "zoiko", "governed", "agentic",
+  "evidence", "vault", "doctrine", "pricing", "price", "prices", "plan",
+  "plans", "tier", "tiers", "starter", "demo", "publishing", "campaign",
+  "campaigns", "workflow", "workflows", "brand", "governance", "compliance",
+  "audit", "forensic", "ledger", "dpa", "gdpr", "ccpa", "sso", "saml",
+  "scim", "api", "webhook", "webhooks", "connector", "connectors",
+  "integration", "integrations", "security", "privacy", "subscription",
+  "billing", "trial", "onboarding", "agent", "agents", "studio", "prompt",
+  "approval", "approvals", "protocol", "validation", "hootsuite", "sprout",
+  "competitor", "competitors", "benchmark", "careers", "press",
+  "subprocessor", "subprocessors", "retention", "responsible",
+]);
+
+// True when the message contains a whole approved trigger phrase, e.g. "$399"
+// or "data processing addendum".
+function hasKnownTriggerPhrase(message, kb = knowledgeIndexes.platform) {
+  const padded = ` ${normalizeText(message)} `;
+  return kb.triggerPhrases.some((phrase) => padded.includes(` ${phrase} `));
+}
+
+function hasStrongZoikoVertexTerm(message) {
+  return tokenize(normalizeText(message)).some((t) => STRONG_ZOIKOVERTEX_TERMS.has(t));
+}
+
 function hasZoikoVertexTopic(message) {
   const text = normalizeText(message);
   const tokens = tokenize(text);
   return tokens.some((t) => ZOIKOVERTEX_TERMS.has(t));
 }
 
-function findFaqMatch(message) {
+function findFaqMatch(message, faq = knowledgeDocument.faq ?? []) {
   const msgTokens = new Set(tokenize(message));
-  return (knowledgeDocument.faq ?? []).find((entry) => {
+  return faq.find((entry) => {
     if (!entry.q) return false;
     const faqTokens = tokenize(entry.q).filter((t) => !STOP_WORDS.has(t));
     if (faqTokens.length < 2) return false;
@@ -851,29 +957,17 @@ function findFaqMatch(message) {
   });
 }
 
-const ADVERSARIAL_PATTERNS = [
-  /hack/i, /jailbreak/i, /bypass.*restriction/i, /ignore.*instruction/i,
-  /dan\b/i, /unrestricted/i, /no.*restriction/i, /pretend.*(dan|unrestricted)/i,
-  /you are now/i, /new.*persona/i, /do.*anything/i, /no.*rule/i,
-  /no.*filter/i, /no.*limit/i, /evil/i, /malicious/i,
-  /illegal/i, /unauthorized/i, /steal/i, /exploit/i,
-];
-
-function isAdversarial(message) {
-  return ADVERSARIAL_PATTERNS.some((p) => p.test(message));
-}
-
-function isMatchReliable(message, ruleReply) {
+function isMatchReliable(message, ruleReply, kb = knowledgeIndexes.platform) {
   if (ruleReply.intent === "fallback") return false;
   if (["greeting", "goodbye", "menu", "capabilities", "email_manager", "handoff", "rephrase"].includes(ruleReply.intent)) return true;
 
   const text = normalizeText(message);
 
   if (ruleReply.intent === "faq") {
-    return findFaqMatch(message) !== undefined;
+    return findFaqMatch(message, kb.faq) !== undefined;
   }
 
-  const intent = knowledgeDocument.intents?.find(
+  const intent = kb.rawIntents.find(
     (i) => (i.id || slugify(extractQuestion(i))) === ruleReply.intent,
   );
   if (!intent) {
@@ -894,13 +988,13 @@ function isMatchReliable(message, ruleReply) {
     const words = tokenize(signal);
     const sigWords = words.filter((w) => w.length > 2 && !STOP_WORDS.has(w));
     if (sigWords.length === 0 && words.length > 0) {
-      if (text.includes(signal)) {
+      if (text.includes(normalizeText(signal))) {
         strongMatchCount += 0.5;
       }
       continue;
     }
 
-    if (text.includes(signal)) {
+    if (text.includes(normalizeText(signal))) {
       strongMatchCount++;
     } else {
       const matchedWords = sigWords.filter((w) => text.includes(w));
@@ -910,27 +1004,90 @@ function isMatchReliable(message, ruleReply) {
     }
   }
 
-  return strongMatchCount >= 1 || hasZoikoVertexTopic(message);
+  return (
+    strongMatchCount >= 1 ||
+    hasStrongZoikoVertexTerm(message) ||
+    hasKnownTriggerPhrase(message, kb)
+  );
 }
 
-async function generateHybridReply(message, language = "en", history, sessionId, user) {
+const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || "https://zoikovertex.com").replace(/\/$/, "");
+const PLATFORM_LOGIN_URL = process.env.PLATFORM_LOGIN_URL || "https://getzoikovertex.com/login";
+
+const PUBLIC_HANDOFF_ANSWER =
+  `You can reach the right ZoikoVertex team directly:\n\n` +
+  `• Sales, pricing, and demos: ${PUBLIC_SITE_URL}/contact-sales\n` +
+  `• Existing customer support: ${PUBLIC_SITE_URL}/support\n` +
+  `• Email: info@zoikovertex.com`;
+
+const PUBLIC_ACCOUNT_ANSWER =
+  `I can't see or change account details from the public website. ` +
+  `Please log in to ZoikoVertex (${PLATFORM_LOGIN_URL}) to manage your workspace, ` +
+  `or contact Support (${PUBLIC_SITE_URL}/support) for help with your account.`;
+
+function buildRuleResponse({ intent, answer, suggestions = [], route = null }) {
+  return {
+    id: uuidv4(),
+    answer,
+    matchedQuestion: intent,
+    confidence: 0.99,
+    suggestions,
+    route,
+    intent,
+    timestamp: new Date().toISOString(),
+    source: "rule",
+  };
+}
+
+// surface: "platform" (authenticated dashboard) or "public" (PUBLIC_WEB).
+async function generateHybridReply(message, language = "en", history, sessionId, user, { surface = "platform" } = {}) {
+  const isPublic = surface === "public";
+  const kb = isPublic ? knowledgeIndexes.public : knowledgeIndexes.platform;
+  const scopeSuggestions = ["What can Custos help with?", "Back to main menu"];
+
+  // 1. Guardrails always run first — a keyword match can never override them.
+  const guardrailHit = guardrails.checkGuardrails(message);
+  if (guardrailHit) {
+    if (sessionId) clearHandoffState(sessionId);
+    return buildRuleResponse({
+      intent: `guardrail_${guardrailHit.id}`,
+      answer: guardrailHit.answer,
+      suggestions: scopeSuggestions,
+    });
+  }
+
+  // 2. Public visitors never get account-specific help from assumed context.
+  if (isPublic && guardrails.isAccountSpecificRequest(message)) {
+    if (sessionId) clearHandoffState(sessionId);
+    return buildRuleResponse({
+      intent: "account_specific",
+      answer: PUBLIC_ACCOUNT_ANSWER,
+      suggestions: ["What can Custos help with?"],
+    });
+  }
+
+  // 3. Clearly unrelated requests (recipes, sports, code, medical, ...).
+  if (guardrails.isOutOfScopeRequest(message) && !hasStrongZoikoVertexTerm(message)) {
+    if (sessionId) clearHandoffState(sessionId);
+    return buildRuleResponse({
+      intent: "out_of_scope",
+      answer: guardrails.outOfScopeAnswer,
+      suggestions: scopeSuggestions,
+    });
+  }
+
   if (sessionId) {
     const hs = getHandoffState(sessionId);
 
     if (hs.state === CONVERSATION_STATES.HANDOFF_OFFERED) {
       if (isAffirmative(message)) {
         clearHandoffState(sessionId);
-        return {
-          id: uuidv4(),
-          answer: "Thank you! Please use the mail option to share your details, and our team will get back to you shortly.\n\nThanks for the conversation. If you have more questions about ZoikoVertex, I'm here.",
-          matchedQuestion: "Human handoff request",
-          confidence: 0.99,
-          suggestions: [],
-          route: null,
+        return buildRuleResponse({
           intent: "handoff",
-          timestamp: new Date().toISOString(),
-          source: "rule",
-        };
+          answer: isPublic
+            ? PUBLIC_HANDOFF_ANSWER
+            : "Thank you! Please use the mail option to share your details, and our team will get back to you shortly.\n\nThanks for the conversation. If you have more questions about ZoikoVertex, I'm here.",
+        });
       }
       if (isNegative(message)) {
         clearHandoffState(sessionId);
@@ -938,9 +1095,16 @@ async function generateHybridReply(message, language = "en", history, sessionId,
     }
   }
 
-  const ruleReply = generateChatReply(message, language);
+  const ruleReply = generateChatReply(message, language, kb);
 
-  if (ruleReply.intent !== "fallback" && (isMatchReliable(message, ruleReply) || ruleReply.intent === "website_url" || ruleReply.intent === "contact_us")) {
+  // The platform handoff copy refers to the in-app mail form, which the public
+  // website does not have.
+  if (isPublic && ruleReply.intent === "handoff") {
+    if (sessionId) clearHandoffState(sessionId);
+    return { ...ruleReply, answer: PUBLIC_HANDOFF_ANSWER, source: "rule" };
+  }
+
+  if (ruleReply.intent !== "fallback" && (isMatchReliable(message, ruleReply, kb) || ruleReply.intent === "website_url" || ruleReply.intent === "contact_us")) {
     if (sessionId) clearHandoffState(sessionId);
     return {
       ...ruleReply,
@@ -962,44 +1126,40 @@ async function generateHybridReply(message, language = "en", history, sessionId,
     };
   }
 
-  if (isAdversarial(message)) {
+  // 4. Nothing ZoikoVertex-related at all — decline instead of guessing.
+  if (!hasZoikoVertexTopic(message) && !hasKnownTriggerPhrase(message, kb)) {
     if (sessionId) clearHandoffState(sessionId);
-    const refusal = knowledgeDocument.adversarial?.find(
-      (a) => a.locked_response && isAdversarial(message),
-    );
-    const answer = refusal?.locked_response ||
-      "I'm Custos, the ZoikoVertex assistant. I can't assist with that request.";
+    return buildRuleResponse({
+      intent: "out_of_scope",
+      answer: guardrails.outOfScopeAnswer,
+      suggestions: kb.defaultSuggestions.slice(0, 3),
+    });
+  }
+
+  // 5. ZoikoVertex-related but no approved answer.
+  if (isPublic) {
+    if (sessionId) clearHandoffState(sessionId);
     return {
-      id: uuidv4(),
-      answer,
-      confidence: 0.99,
-      suggestions: ["What can Custos help with?", "Back to main menu"],
-      route: null,
-      intent: "adversarial_refusal",
-      timestamp: new Date().toISOString(),
+      ...buildFallbackAnswer(language, kb),
+      answer: `I don't have an approved public answer for that yet.\n\n${PUBLIC_HANDOFF_ANSWER}`,
       source: "rule",
     };
   }
 
-  if (ruleReply.intent === "fallback" || !isMatchReliable(message, ruleReply)) {
-    if (sessionId) setHandoffState(sessionId, CONVERSATION_STATES.HANDOFF_OFFERED, {});
-    const handoffMsg = "Would you like me to connect you with someone who can help?";
-    return {
-      ...ruleReply,
-      answer: ruleReply.intent === "fallback"
-        ? `${ruleReply.answer}\n\n${handoffMsg}`
-        : `I'm not sure I understood that correctly.\n\n${handoffMsg}`,
-      suggestions: [
-        ...(ruleReply.suggestions || []),
-        "Yes, connect me to a human",
-        "I'll rephrase my question",
-      ],
-      source: "rule",
-    };
-  }
-
-  if (sessionId) clearHandoffState(sessionId);
-  return { ...ruleReply, source: "rule" };
+  if (sessionId) setHandoffState(sessionId, CONVERSATION_STATES.HANDOFF_OFFERED, {});
+  const handoffMsg = "Would you like me to connect you with someone who can help?";
+  return {
+    ...ruleReply,
+    answer: ruleReply.intent === "fallback"
+      ? `${ruleReply.answer}\n\n${handoffMsg}`
+      : `I'm not sure I understood that correctly.\n\n${handoffMsg}`,
+    suggestions: [
+      ...(ruleReply.suggestions || []),
+      "Yes, connect me to a human",
+      "I'll rephrase my question",
+    ],
+    source: "rule",
+  };
 }
 
 async function handleHumanHandoff({ user, message, sessionId }) {
@@ -1144,6 +1304,7 @@ module.exports = {
   generateChatReply,
   generateHybridReply,
 
+  getConversationOwner,
   handleHumanHandoff,
   matchWebsiteUrl,
   getChatContext,

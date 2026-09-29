@@ -1,6 +1,9 @@
 const { sendMail } = require("../services/mailService");
-const { getSessionHistory } = require("../services/chatService");
-const { formatChatHistory } = require("../utils/formatChatHistory");
+const {
+  getConversationOwner,
+  getSessionHistory,
+} = require("../services/chatService");
+const { escapeHtml, formatChatHistory } = require("../utils/formatChatHistory");
 const { getMailLimitStatus } = require("../middlewares/rateLimiter");
 const {
   detectLanguageFromText,
@@ -66,15 +69,46 @@ function resolveOriginalLanguage({
   return "English";
 }
 
+// Transcripts only ever go to the support mailbox. The recipient is never taken
+// from the request, otherwise this endpoint becomes an open mail relay.
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "info@zoikovertex.com";
+const MAX_SUBJECT_LENGTH = 200;
+const MAX_BODY_LENGTH = 5000;
+
 const sendMailHandler = async (req, res) => {
   try {
-    const { sessionId, user, to, subject, body } = req.body;
+    const { sessionId, subject, body } = req.body;
+    const user = {
+      name: String(req.body.user?.name || "").slice(0, 120),
+      company: String(req.body.user?.company || "").slice(0, 120),
+      email: req.chatUser.email,
+    };
 
-    if (!sessionId || !user?.email || !to || !subject) {
+    if (!sessionId || typeof subject !== "string" || !subject.trim()) {
       return res.status(400).json({
         success: false,
         code: "MISSING_FIELDS",
         message: "Missing required fields.",
+      });
+    }
+
+    if (
+      subject.length > MAX_SUBJECT_LENGTH ||
+      (typeof body === "string" && body.length > MAX_BODY_LENGTH)
+    ) {
+      return res.status(400).json({
+        success: false,
+        code: "TOO_LONG",
+        message: "Your message is too long. Please shorten it and try again.",
+      });
+    }
+
+    const owner = await getConversationOwner(sessionId);
+    if (!owner || owner.toLowerCase() !== user.email) {
+      return res.status(403).json({
+        success: false,
+        code: "ACCESS_DENIED",
+        message: "You do not have access to that conversation.",
       });
     }
 
@@ -116,8 +150,8 @@ const sendMailHandler = async (req, res) => {
     );
 
     await sendMail({
-      to,
-      from: user.email,
+      to: SUPPORT_EMAIL,
+      replyTo: user.email,
       subject: translatedSubject.englishBody || subject,
       html,
       body: translatedBody.englishBody || body,
@@ -169,8 +203,8 @@ const replyToUserHandler = async (req, res) => {
               ZoikoVertex Support — Reply
             </div>
             <div style="padding:20px;">
-              ${userName ? `<p>Hi ${userName},</p>` : ""}
-              <p>${translated.translated.replace(/\n/g, "<br/>")}</p>
+              ${userName ? `<p>Hi ${escapeHtml(userName)},</p>` : ""}
+              <p>${escapeHtml(translated.translated).replace(/\n/g, "<br/>")}</p>
               <hr/>
               <p style="font-size:12px;color:#888;">
                 This reply was sent in: <b>${translated.lang || originalLangCode}</b>
@@ -198,17 +232,7 @@ const replyToUserHandler = async (req, res) => {
 
 const getMailStatusHandler = async (req, res) => {
   try {
-    const email = (req.query.email || "").trim().toLowerCase();
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        code: "MISSING_EMAIL",
-        message: "Email is required.",
-      });
-    }
-
-    const status = await getMailLimitStatus(email);
+    const status = await getMailLimitStatus(req.chatUser.email);
     return res.status(200).json({
       success: true,
       ...status,
