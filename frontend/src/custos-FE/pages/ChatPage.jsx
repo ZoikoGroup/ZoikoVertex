@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { useStore } from "../store/useStore";
 import {
   endChatSession,
-  fetchMailStatus,
   fetchHistory,
   fetchUserSessions,
   requestHandoff,
@@ -15,7 +15,6 @@ import ChatHeader from "../components/layout/ChatHeader";
 import MessageBubble from "../components/chat/MessageBubble";
 import TypingDots from "../components/chat/TypingDots";
 import Composer from "../components/chat/Composer";
-import MailResponse from "../components/chat/MailResponse";
 
 const WELCOME_TEXT =
   "Hi there! I'm your ZoikoVertex assistant.\n\nI'm here to help with platform governance, approval workflows, brand controls, pricing, security, trust docs, and anything else about ZoikoVertex.\n\nWhat can I help you with today?";
@@ -54,17 +53,42 @@ function normalizeMessage(message, index = 0) {
   };
 }
 
-function formatWaitTime(ms) {
-  const totalMinutes = Math.ceil(ms / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+// Support tickets are raised on the platform's /support page, which prefills
+// its form from ?category=&subject=&message=. Kept short so the URL stays sane.
+const SUPPORT_SUBJECT_MAX = 120;
+const SUPPORT_MESSAGE_MAX = 1500;
 
-  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h`;
-  return `${minutes}m`;
+function buildSupportTicketUrl(messages) {
+  const textMessages = messages.filter(
+    (m) =>
+      typeof m.content === "string" &&
+      m.content.trim() &&
+      !String(m.id || "").startsWith("welcome-"),
+  );
+  const lastUserMessage =
+    [...textMessages].reverse().find((m) => m.role === "user")?.content.trim() || "";
+
+  const transcript = textMessages
+    .slice(-10)
+    .map((m) => `${m.role === "user" ? "Me" : "Custos"}: ${m.content.trim()}`)
+    .join("\n\n");
+
+  const params = new URLSearchParams({ category: "General Feedback" });
+  if (lastUserMessage) params.set("subject", lastUserMessage.slice(0, SUPPORT_SUBJECT_MAX));
+  if (transcript) {
+    // Keep the most recent part of the conversation if it is too long.
+    const header = "Conversation with Custos:\n\n";
+    const room = SUPPORT_MESSAGE_MAX - header.length;
+    params.set(
+      "message",
+      header + (transcript.length > room ? `…${transcript.slice(-(room - 1))}` : transcript),
+    );
+  }
+  return `/support?${params.toString()}`;
 }
 
 export default function ChatPage() {
+  const router = useRouter();
   const user = useStore((state) => state.user);
   const sessionId = useStore((state) => state.sessionId);
   const setSessionId = useStore((state) => state.setSessionId);
@@ -298,47 +322,9 @@ export default function ChatPage() {
     setSessions(response.sessions || []);
   }, [setSessions, user]);
 
-  const handleMailClick = useCallback(async () => {
-    if (!user?.email) {
-      toast.error("User session missing. Please log in again.");
-      return;
-    }
-
-    try {
-      const status = await fetchMailStatus();
-      if (status?.allowed === false) {
-        toast.error(
-          `Support mail limit reached. Please try again in ${formatWaitTime(
-            status.msBeforeNextReset || 86400 * 1000,
-          )}.`,
-          { duration: 6000 },
-        );
-        return;
-      }
-    } catch (_err) {
-      // If status check fails, still allow the user to open the panel.
-    }
-
-    const alreadyOpen = messages.some((m) => m.isMail === true);
-    if (alreadyOpen) return;
-
-    const mailId = `mail-${Date.now()}`;
-
-    const closeMail = () => {
-      const current = useStore.getState().messages;
-      replaceMessages(current.filter((m) => m.id !== mailId));
-    };
-
-    replaceMessages([
-      ...messages,
-      {
-        id: mailId,
-        role: "assistant",
-        isMail: true,
-        content: <MailResponse theme={theme} onClose={closeMail} />,
-      },
-    ]);
-  }, [messages, replaceMessages, theme, user]);
+  const handleSupportTicketClick = useCallback(() => {
+    router.push(buildSupportTicketUrl(messages));
+  }, [messages, router]);
 
   const handleNewChat = useCallback(async () => {
     if (sessionId && user?.email) {
@@ -413,7 +399,7 @@ export default function ChatPage() {
           sessions={sessions}
           onSelectSession={handleSelectSession}
           onNewChat={handleNewChat}
-          onMailClick={handleMailClick}
+          onSupportTicketClick={handleSupportTicketClick}
         />
 
         <div

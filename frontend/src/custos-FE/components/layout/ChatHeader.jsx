@@ -6,7 +6,7 @@ import {
   HiOutlineSun,
 } from "react-icons/hi2";
 import {
-  HiOutlineMail,
+  HiOutlineTicket,
   HiOutlineChatAlt2,
 } from "react-icons/hi";
 import { TiThMenu } from "react-icons/ti";
@@ -25,7 +25,7 @@ export default function ChatHeader({
   sessions,
   onSelectSession,
   onNewChat,
-  onMailClick,
+  onSupportTicketClick,
 }) {
   const isDark = theme === "dark";
   const panelRef = useRef(null);
@@ -186,7 +186,7 @@ export default function ChatHeader({
                 type="button"
                 onClick={() => {
                   setActionOpen(false);
-                  onMailClick();
+                  onSupportTicketClick();
                 }}
                 className={`flex items-center gap-2 w-full px-4 py-2.5 text-sm transition-all ${
                   isDark
@@ -194,7 +194,8 @@ export default function ChatHeader({
                     : "text-[#1a5fa8] hover:bg-[rgba(43,154,217,0.12)] hover:text-[#17337c]"
                 }`}
               >
-                <HiOutlineMail className="h-4 w-4 shrink-0" /> Mail
+                <HiOutlineTicket className="h-4 w-4 shrink-0" /> Raise Support
+                Ticket
               </button>
             </div>
           )}

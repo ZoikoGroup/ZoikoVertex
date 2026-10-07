@@ -127,30 +127,6 @@ export async function deleteChatSession(sessionId) {
   return data;
 }
 
-// MAIL
-// The backend always sends to the support mailbox and rate-limits by the
-// verified token identity; it builds the HTML itself from sessionId.
-export async function sendMail({ sessionId, user, subject, body }) {
-  const { data } = await api.post(
-    "/mail/send",
-    {
-      sessionId,
-      user,
-      subject,
-      body,
-    },
-    {
-      timeout: 30000,
-    },
-  );
-  return data;
-}
-
-export async function fetchMailStatus() {
-  const { data } = await api.get("/mail/status");
-  return data;
-}
-
 // FILE UPLOAD
 export async function uploadFile(file) {
   const formData = new FormData();
