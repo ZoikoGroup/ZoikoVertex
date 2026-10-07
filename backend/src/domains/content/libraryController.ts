@@ -18,6 +18,14 @@ const SUPABASE_HOST = (() => {
   try { return new URL(env.SUPABASE_URL).hostname; } catch { return null; }
 })();
 
+// Hosts that are allowed to serve this project's storage. On a self-hosted deployment the
+// backend talks to storage over localhost but browsers use the public gateway, so we also
+// accept hosts listed in PUBLIC_STORAGE_HOSTS (comma-separated).
+const ALLOWED_STORAGE_HOSTS: string[] = [
+  ...(SUPABASE_HOST ? [SUPABASE_HOST] : []),
+  ...(process.env.PUBLIC_STORAGE_HOSTS || '').split(',').map((h) => h.trim()).filter(Boolean),
+];
+
 function validateStorageUrls(urls: unknown): { ok: true; list: string[] } | { ok: false; error: string } {
   if (!Array.isArray(urls) || urls.length === 0)
     return { ok: false, error: 'urls must be a non-empty array' };
@@ -31,8 +39,8 @@ function validateStorageUrls(urls: unknown): { ok: true; list: string[] } | { ok
       if (parsed.protocol !== 'https:')
         return { ok: false, error: `URL must use HTTPS: ${u}` };
       // Must belong to this Supabase project
-      if (SUPABASE_HOST && parsed.hostname !== SUPABASE_HOST)
-        return { ok: false, error: `URL must be from this project's storage (${SUPABASE_HOST}): ${parsed.hostname}` };
+      if (ALLOWED_STORAGE_HOSTS.length > 0 && !ALLOWED_STORAGE_HOSTS.includes(parsed.hostname))
+        return { ok: false, error: `URL must be from this project's storage (${ALLOWED_STORAGE_HOSTS.join(', ')}): ${parsed.hostname}` };
       // Must be a storage path (not an arbitrary endpoint)
       if (!parsed.pathname.startsWith('/storage/v1/object/'))
         return { ok: false, error: `URL is not a valid storage path: ${u}` };
