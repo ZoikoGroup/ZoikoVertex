@@ -49,6 +49,14 @@ export default function FloatingAssistantBot({ right = 24, bottom = 24 } = {}) {
     return () => window.removeEventListener("toggle-chatbot", handleToggle);
   }, []);
 
+  // Close via custom event dispatched from the chatbot (e.g. after it opens
+  // the Support page to raise a ticket)
+  useEffect(() => {
+    const handleClose = () => setIsOpen(false);
+    window.addEventListener("close-chatbot", handleClose);
+    return () => window.removeEventListener("close-chatbot", handleClose);
+  }, []);
+
   return (
     <>
       <style>{`
