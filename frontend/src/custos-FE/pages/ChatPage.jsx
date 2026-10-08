@@ -324,6 +324,8 @@ export default function ChatPage() {
 
   const handleSupportTicketClick = useCallback(() => {
     router.push(buildSupportTicketUrl(messages));
+    // Close the floating chat panel so the Support page is fully visible.
+    window.dispatchEvent(new Event("close-chatbot"));
   }, [messages, router]);
 
   const handleNewChat = useCallback(async () => {
