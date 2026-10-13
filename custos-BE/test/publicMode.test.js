@@ -147,6 +147,43 @@ test("oversized or empty public messages are rejected", async () => {
   assert.equal(empty.status, 400);
 });
 
+test("every public quick action returns an approved answer", async () => {
+  const token = await visitorToken();
+  const { json } = await call("/public/context");
+  const actions = json.context.quickActions;
+  assert.ok(actions.length >= 6, "expected the six website quick actions");
+
+  for (const action of actions) {
+    assert.ok(action.label && action.prompt && action.icon, `incomplete quick action ${JSON.stringify(action)}`);
+    const reply = await call("/public/chat", { method: "POST", token, body: { message: action.prompt } });
+    assert.equal(reply.status, 200);
+    assert.doesNotMatch(
+      reply.json.message.intent,
+      /^(guardrail_|out_of_scope|account_specific|fallback)/,
+      `quick action "${action.label}" -> ${reply.json.message.intent}`,
+    );
+  }
+});
+
+test("feature highlights are traceable to approved capability claims (AC-14)", async () => {
+  const knowledge = require("../data/knowledge.json");
+  const { presentation } = require("../data/publicKnowledge.json");
+  const capabilityIds = new Set(knowledge.capabilities.map((c) => c.id));
+
+  for (const [key, rows] of Object.entries(presentation.highlights)) {
+    for (const row of rows) {
+      assert.ok(capabilityIds.has(row.source_capability), `${key}: unknown source ${row.source_capability}`);
+    }
+  }
+
+  const token = await visitorToken();
+  const { json } = await call("/public/chat", { method: "POST", token, body: { message: "What is ZoikoVertex?" } });
+  assert.equal(json.message.highlights.length, 4);
+  for (const row of json.message.highlights) {
+    assert.deepEqual(Object.keys(row).sort(), ["description", "icon", "title"]);
+  }
+});
+
 test("public chat without a visitor token is rejected", async () => {
   const { status } = await call("/public/chat", { method: "POST", body: { message: "hi" } });
   assert.equal(status, 401);

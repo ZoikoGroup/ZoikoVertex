@@ -7,6 +7,7 @@
 //   • never persisted to the platform conversation tables, and its text is
 //     never written to logs or the unknown-prompt tracker
 const knowledgeDocument = require("../data/knowledge.json");
+const publicKnowledge = require("../data/publicKnowledge.json");
 const { signVisitorToken, PUBLIC_MODE } = require("../middlewares/auth");
 const { generateHybridReply } = require("../services/chatService");
 
@@ -20,14 +21,21 @@ const pageLabels = new Map(
   (knowledgeDocument.page_registry || []).map((page) => [page.path, page.label]),
 );
 
-const PUBLIC_QUICK_ACTIONS = [
-  "What is ZoikoVertex?",
-  "Compare plans",
-  "Book a demo",
-  "How does the Three-Key Approval Protocol work?",
-  "Security and privacy",
-  "Talk to Sales",
-];
+const presentation = publicKnowledge.presentation || {};
+const PUBLIC_QUICK_ACTIONS = (presentation.quick_actions || []).map(({ label, prompt, icon }) => ({
+  label,
+  prompt,
+  icon,
+}));
+const HIGHLIGHTS = presentation.highlights || {};
+const HIGHLIGHT_ALIASES = presentation.highlight_aliases || {};
+
+// Feature-card rows for an answer, keyed by intent id (or by FAQ question via
+// highlight_aliases). Only title/description/icon reach the browser.
+function buildHighlights(reply) {
+  const key = HIGHLIGHTS[reply.intent] ? reply.intent : HIGHLIGHT_ALIASES[reply.matchedQuestion];
+  return (HIGHLIGHTS[key] || []).map(({ icon, title, description }) => ({ icon, title, description }));
+}
 
 function buildLinks(route) {
   if (!route || typeof route !== "string" || route === "/") return [];
@@ -61,8 +69,10 @@ function getPublicContext(_req, res) {
     context: {
       assistantName: "Custos",
       productName: "ZoikoVertex",
+      welcomeTitle: presentation.welcome?.title || "Welcome to ZoikoVertex",
       welcomeMessage:
-        "Hi, I'm Custos, the ZoikoVertex assistant. I can explain the platform, compare plans, point you to security and privacy information, or connect you with Sales or Support.",
+        presentation.welcome?.message ||
+        "I'm Custos, the ZoikoVertex assistant. I can help you explore the platform, governance features, pricing, and demos.",
       quickActions: PUBLIC_QUICK_ACTIONS,
       privacyNotice:
         "Custos is an automated assistant that answers from approved ZoikoVertex public information. Please don't share passwords, payment details, or other sensitive information.",
@@ -119,6 +129,7 @@ async function sendPublicMessage(req, res) {
         answer: reply.answer,
         suggestions: (reply.suggestions || []).slice(0, MAX_SUGGESTIONS),
         links: buildLinks(reply.route),
+        highlights: buildHighlights(reply),
         intent: reply.intent,
       },
     });

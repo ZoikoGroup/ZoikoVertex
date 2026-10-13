@@ -14,17 +14,24 @@ export const isCustosConfigured = Boolean(API_BASE);
 
 export type CustosLink = { label: string; url: string };
 
+export type CustosHighlight = { icon: string; title: string; description: string };
+
+export type CustosQuickAction = { label: string; prompt: string; icon: string };
+
 export type CustosReply = {
   answer: string;
   suggestions: string[];
   links: CustosLink[];
+  highlights?: CustosHighlight[];
   intent: string;
 };
 
 export type CustosContext = {
   assistantName: string;
+  welcomeTitle?: string;
   welcomeMessage: string;
-  quickActions: string[];
+  // Older backends sent plain strings; current ones send label/prompt/icon.
+  quickActions: Array<string | CustosQuickAction>;
   privacyNotice: string;
   privacyUrl: string;
   contactSalesUrl: string;
