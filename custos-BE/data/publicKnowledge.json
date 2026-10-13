@@ -3,6 +3,76 @@
     "description": "Approved public knowledge collection for PUBLIC_WEB mode (ZV-WEBCHAT-REQ-001 WEB-INT-004). Default-deny: only the intents and FAQs listed here can be served on the public website. The content owner must review this list before release.",
     "status": "PENDING_CONTENT_OWNER_REVIEW"
   },
+  "presentation": {
+    "_note": "Public website (PUBLIC_WEB) presentation only. Every highlight must restate an approved capabilities[].safe_claim in knowledge.json; source_capability is checked by custos-BE/test/publicMode.test.js.",
+    "welcome": {
+      "title": "Welcome to ZoikoVertex",
+      "message": "I'm Custos, the ZoikoVertex assistant. I can help you explore the platform, AI agents, governance features, pricing, and demos."
+    },
+    "quick_actions": [
+      {
+        "label": "Platform Overview",
+        "prompt": "What is ZoikoVertex?",
+        "icon": "box"
+      },
+      {
+        "label": "AI Agents",
+        "prompt": "What is Agent Studio?",
+        "icon": "users"
+      },
+      {
+        "label": "Governance & Security",
+        "prompt": "What security controls does ZoikoVertex have?",
+        "icon": "shield"
+      },
+      {
+        "label": "Pricing",
+        "prompt": "Compare plans",
+        "icon": "tag"
+      },
+      {
+        "label": "Book a Demo",
+        "prompt": "Book a demo",
+        "icon": "calendar"
+      },
+      {
+        "label": "API & Webhooks",
+        "prompt": "API and Webhooks",
+        "icon": "link"
+      }
+    ],
+    "highlights": {
+      "what_is_zoikovertex": [
+        {
+          "icon": "shield",
+          "title": "Governed AI agents",
+          "description": "No AI publishes without authorised human approval.",
+          "source_capability": "authority_layer"
+        },
+        {
+          "icon": "workflow",
+          "title": "Approval-controlled releases",
+          "description": "All three keys of the Three-Key Approval Protocol are granted before publishing.",
+          "source_capability": "three_key_approval"
+        },
+        {
+          "icon": "chart",
+          "title": "Campaign workflows",
+          "description": "From brief through launch gate to reconciled evidence.",
+          "source_capability": "campaign_workflows"
+        },
+        {
+          "icon": "file",
+          "title": "Audit-ready oversight",
+          "description": "Immutable evidence records, audit trails, and governance documentation.",
+          "source_capability": "auditability"
+        }
+      ]
+    },
+    "highlight_aliases": {
+      "What is ZoikoVertex?": "what_is_zoikovertex"
+    }
+  },
   "intents": [
     "what_is_zoikovertex",
     "governed_agentic_execution",
