@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
-import { Send, Clock, Bot, ImageIcon, FileText, ShieldCheck, ShieldAlert, ShieldX, Trash2 } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { Send, Clock, Bot, ImageIcon, FileText, ShieldCheck, ShieldAlert, ShieldX, Trash2, ListFilter, ChevronDown, Check } from "lucide-react";
+import { Popover } from "@/components/ui/primitives";
 
 export interface PublishCheck {
   verdict: "safe" | "review" | "block";
@@ -29,6 +30,43 @@ const VERDICT_STYLES: Record<string, { cls: string; icon: React.ReactNode; label
   block: { cls: "bg-error-text/10 text-error-text border-error-border/20", icon: <ShieldX className="w-3 h-3" />, label: "Blocked" },
 };
 
+// Known social platforms, in the order they appear in the platform menu.
+const PLATFORM_LABELS: Record<string, string> = {
+  threads: "Threads",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  youtube: "YouTube",
+  twitter: "X (Twitter)",
+  tiktok: "TikTok",
+  pinterest: "Pinterest",
+};
+const PLATFORM_ORDER = Object.keys(PLATFORM_LABELS);
+const PLATFORM_ALIASES: Record<string, string> = {
+  ig: "instagram",
+  insta: "instagram",
+  fb: "facebook",
+  meta: "facebook",
+  yt: "youtube",
+  x: "twitter",
+};
+const ALL = "all";
+const OTHER = "other";
+
+/** Collapses the many spellings of a platform (e.g. "LinkedIn", "linkedin_personal", "x") to one key. */
+export function platformKey(platform: string | null | undefined): string {
+  const p = (platform || "").trim().toLowerCase();
+  if (!p) return OTHER;
+  if (PLATFORM_ALIASES[p]) return PLATFORM_ALIASES[p];
+  const known = PLATFORM_ORDER.find((k) => p === k || p.startsWith(`${k}_`) || p.startsWith(`${k}-`));
+  return known ?? p;
+}
+
+function platformLabel(key: string): string {
+  if (key === OTHER) return "Other";
+  return PLATFORM_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+}
+
 function timeAgo(iso?: string | null): string {
   if (!iso) return "";
   const diff = Math.max(0, Date.now() - new Date(iso).getTime());
@@ -47,9 +85,38 @@ export default function PublishedContentPanel({
   data?: PublishedContentItem[];
   onDelete?: (item: PublishedContentItem) => void;
 }) {
+  const [platform, setPlatform] = useState<string>(ALL);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuAnchor = useRef<HTMLButtonElement>(null);
+
+  // Post count per platform. Every known platform is listed (greyed out at 0)
+  // so the menu always offers the full set; unknown platforms follow alphabetically.
+  const platformCounts = useMemo(() => {
+    const counts = new Map<string, number>(PLATFORM_ORDER.map((k) => [k, 0]));
+    for (const item of data ?? []) {
+      const k = platformKey(item.platform);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const extra = [...counts.keys()]
+      .filter((k) => !PLATFORM_ORDER.includes(k) && k !== OTHER)
+      .sort();
+    const keys = [...PLATFORM_ORDER, ...extra, ...(counts.has(OTHER) ? [OTHER] : [])];
+    return keys.map((k) => ({ key: k, label: platformLabel(k), count: counts.get(k) ?? 0 }));
+  }, [data]);
+
+  const visible = useMemo(
+    () => (platform === ALL ? data ?? [] : (data ?? []).filter((item) => platformKey(item.platform) === platform)),
+    [data, platform],
+  );
+
   if (!data) {
     return <div className="h-48 animate-pulse bg-[var(--surface)] rounded-2xl" />;
   }
+
+  const choose = (key: string) => {
+    setPlatform(key);
+    setMenuOpen(false);
+  };
 
   return (
     <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden">
@@ -67,9 +134,61 @@ export default function PublishedContentPanel({
             </p>
           </div>
         </div>
-        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-info-text/10 text-info-text border border-info-border/20">
-          {data.length} items
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            ref={menuAnchor}
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Filter posts by platform"
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+              platform === ALL
+                ? "bg-[var(--surface)] text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+                : "bg-info-text/10 text-info-text border-info-border/20"
+            }`}
+          >
+            <ListFilter className="w-3.5 h-3.5" />
+            {platform === ALL ? "All platforms" : platformLabel(platform)}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${menuOpen ? "rotate-180" : ""}`} />
+          </button>
+          <Popover
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            anchorRef={menuAnchor}
+            align="end"
+            className="fixed w-56"
+          >
+            {[{ key: ALL, label: "All platforms", count: data.length }, ...platformCounts].map((opt) => {
+              const selected = platform === opt.key;
+              const disabled = opt.key !== ALL && opt.count === 0;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  disabled={disabled}
+                  onClick={() => choose(opt.key)}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                    selected
+                      ? "bg-info-text/10 text-info-text font-semibold"
+                      : disabled
+                        ? "text-[var(--text-muted)] opacity-50 cursor-not-allowed"
+                        : "text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
+                  }`}
+                >
+                  <Check className={`w-3.5 h-3.5 shrink-0 ${selected ? "" : "invisible"}`} />
+                  <span className="flex-1 truncate">{opt.label}</span>
+                  <span className="tabular-nums text-[var(--text-muted)]">{opt.count}</span>
+                </button>
+              );
+            })}
+          </Popover>
+          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-info-text/10 text-info-text border border-info-border/20">
+            {platform === ALL ? `${data.length} items` : `${visible.length} of ${data.length} items`}
+          </span>
+        </div>
       </div>
 
       {data.length === 0 ? (
@@ -79,10 +198,24 @@ export default function PublishedContentPanel({
             No published content yet. Publish or schedule a post from the Publish Hub and it will appear here.
           </p>
         </div>
+      ) : visible.length === 0 ? (
+        <div className="p-10 text-center">
+          <ImageIcon className="w-8 h-8 text-[var(--text-muted)] mx-auto mb-3" />
+          <p className="text-sm text-[var(--text-muted)]">
+            No {platformLabel(platform)} posts yet.
+          </p>
+          <button
+            type="button"
+            onClick={() => setPlatform(ALL)}
+            className="mt-3 text-xs font-semibold text-info-text hover:underline"
+          >
+            Show all platforms
+          </button>
+        </div>
       ) : (
         <div className="overflow-y-auto max-h-[420px] p-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {data.map((item) => (
+          {visible.map((item) => (
             <div
               key={`${item.source}-${item.id}`}
               className="flex gap-3 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-hover)]/20 hover:border-[var(--border-hover)] transition-colors"
