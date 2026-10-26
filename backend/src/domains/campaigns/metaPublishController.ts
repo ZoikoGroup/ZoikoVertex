@@ -10,6 +10,7 @@ import {
   deleteMetaCampaign,
   syncCampaignsFromMeta,
 } from './metaCampaignPublisher';
+import { resolveCampaignMetaAccount } from './resolveCampaignMetaAccount';
 
 function appSecretProof(token: string): string {
   const secret = env.META_APP_SECRET;
@@ -120,14 +121,8 @@ export const verifyMetaCampaign = async (req: AuthRequest, res: Response) => {
     return res.status(400).json({ error: 'Campaign has not been published to Meta yet.' });
   }
 
-  const { data: account } = await supabaseAdmin
-    .from('connected_accounts')
-    .select('access_token, refresh_token')
-    .eq('id', campaign.selected_meta_account_id)
-    .eq('workspace_id', workspaceId)
-    .single();
-
-  const token = account?.refresh_token || account?.access_token;
+  const resolved = await resolveCampaignMetaAccount(campaign.selected_meta_account_id, workspaceId);
+  const token = resolved?.token;
   if (!token) return res.status(400).json({ error: 'Access token not found. Please reconnect Facebook.' });
 
   const META_GRAPH = 'https://graph.facebook.com/v21.0';
