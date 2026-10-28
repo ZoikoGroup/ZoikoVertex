@@ -9,11 +9,9 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   ImageOff,
   AlertCircle,
   Bot,
-  Braces,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { type PublishedContentItem, VERDICT_STYLES, platformKey, platformLabel } from "./PublishedContentPanel";
@@ -259,7 +257,6 @@ function PostDetailDialog({ item, onClose }: { item: PublishedContentItem; onClo
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,7 +315,6 @@ function PostDetailDialog({ item, onClose }: { item: PublishedContentItem; onClo
       : "Text";
   const publishedAt = formatTimestamp(meta?.timestamp);
   const account = meta?.username ? `@${meta.username}` : entry?.account_name ?? null;
-  const rawJson = entry?.raw ?? meta;
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6" role="presentation">
@@ -504,28 +500,6 @@ function PostDetailDialog({ item, onClose }: { item: PublishedContentItem; onClo
                 </p>
               )}
 
-              {rawJson && (
-                <div className="my-3 rounded-xl border border-[var(--border)] overflow-hidden">
-                  <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[var(--surface-hover)]/40">
-                    <button
-                      type="button"
-                      onClick={() => setShowRaw((v) => !v)}
-                      aria-expanded={showRaw}
-                      className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                    >
-                      <Braces className="w-3.5 h-3.5" />
-                      Raw response from {pLabel}
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showRaw ? "rotate-180" : ""}`} />
-                    </button>
-                    <CopyButton value={JSON.stringify(rawJson, null, 2)} label="Copy JSON" />
-                  </div>
-                  {showRaw && (
-                    <pre className="max-h-64 overflow-auto p-3 text-[11px] leading-relaxed font-mono text-[var(--text-secondary)] bg-[var(--surface)]">
-                      {JSON.stringify(rawJson, null, 2)}
-                    </pre>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Footer */}
