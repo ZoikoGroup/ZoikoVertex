@@ -15,6 +15,7 @@ import * as threeKeyService from '../../services/workflowThreeKey.service';
 import * as exportService from '../../services/workflowExport.service';
 import * as notificationService from '../../services/workflowNotification.service';
 import { enrichInstancesWithReview, getRecentPublishedContent, deletePublishedContent } from '../../services/workflowPublishLink.service';
+import { getPublishedPostMeta } from '../../services/publishedPostMeta.service';
 import { getParam, getQueryNumber, getQueryValue } from '../../shared/request';
 import { executeInstance } from '../../modules/workflow-engine/executor';
 
@@ -475,6 +476,26 @@ export const getPublishedContent = async (req: AuthRequest, res: Response, next:
     res.json({ success: true, data: items });
   } catch (err) {
     logger.error({ err }, 'Failed to get published content');
+    next(err);
+  }
+};
+
+/** GET /api/v1/agents/workflows/published-content/:id/meta — live post details from Meta (permalink, media, timestamp). */
+export const getPublishedContentMeta = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const workspaceId = req.user?.workspace_id;
+    if (!workspaceId) return res.status(403).json({ error: 'Workspace not found' });
+    const id = String(req.params.id || '');
+    if (!id) return res.status(400).json({ error: 'Post id is required' });
+    // scheduled_posts rows carry no account or platform post id to look up
+    if (getQueryValue(req, 'source') === 'schedule') {
+      return res.json({ success: true, data: { status: 'scheduled', platform: null, posts: [] } });
+    }
+    const data = await getPublishedPostMeta(workspaceId, id);
+    if (!data) return res.status(404).json({ error: 'Post not found' });
+    res.json({ success: true, data });
+  } catch (err) {
+    logger.error({ err }, 'Failed to get published content metadata');
     next(err);
   }
 };

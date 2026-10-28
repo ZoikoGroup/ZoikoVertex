@@ -24,7 +24,7 @@ export interface PublishedContentItem {
   check: PublishCheck | null;
 }
 
-const VERDICT_STYLES: Record<string, { cls: string; icon: React.ReactNode; label: string }> = {
+export const VERDICT_STYLES: Record<string, { cls: string; icon: React.ReactNode; label: string }> = {
   safe: { cls: "bg-success-text/10 text-success-text border-success-border/20", icon: <ShieldCheck className="w-3 h-3" />, label: "Safe" },
   review: { cls: "bg-warning-text/10 text-warning-text border-warning-border/20", icon: <ShieldAlert className="w-3 h-3" />, label: "Review" },
   block: { cls: "bg-error-text/10 text-error-text border-error-border/20", icon: <ShieldX className="w-3 h-3" />, label: "Blocked" },
@@ -62,7 +62,7 @@ export function platformKey(platform: string | null | undefined): string {
   return known ?? p;
 }
 
-function platformLabel(key: string): string {
+export function platformLabel(key: string): string {
   if (key === OTHER) return "Other";
   return PLATFORM_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
@@ -81,9 +81,11 @@ function timeAgo(iso?: string | null): string {
 export default function PublishedContentPanel({
   data,
   onDelete,
+  onSelect,
 }: {
   data?: PublishedContentItem[];
   onDelete?: (item: PublishedContentItem) => void;
+  onSelect?: (item: PublishedContentItem) => void;
 }) {
   const [platform, setPlatform] = useState<string>(ALL);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -218,7 +220,22 @@ export default function PublishedContentPanel({
           {visible.map((item) => (
             <div
               key={`${item.source}-${item.id}`}
-              className="flex gap-3 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-hover)]/20 hover:border-[var(--border-hover)] transition-colors"
+              {...(onSelect && {
+                role: "button",
+                tabIndex: 0,
+                "aria-label": "View post details",
+                onClick: () => onSelect(item),
+                onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelect(item);
+                  }
+                },
+              })}
+              className={`flex gap-3 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-hover)]/20 hover:border-[var(--border-hover)] transition-colors ${
+                onSelect ? "cursor-pointer hover:bg-[var(--surface-hover)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info-text/40" : ""
+              }`}
             >
               {/* Media thumbnail */}
               <div className="shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-[var(--surface-hover)] border border-[var(--border)] flex items-center justify-center">
@@ -326,6 +343,7 @@ export default function PublishedContentPanel({
 
               {onDelete && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDelete(item);
