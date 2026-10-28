@@ -972,6 +972,10 @@ export const api = {
     return this.get(`/api/v1/inbox/messages/${messageId}/post-preview`);
   },
 
+  async getPublishedPostMeta(id: string, source: "publish" | "schedule") {
+    return this.get(`/api/v1/agents/workflows/published-content/${id}/meta?source=${source}`);
+  },
+
   async listInboxAutoReplyRules() {
     return this.get('/api/v1/inbox/settings/auto-reply');
   },

@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import ActiveOrchestrations from "./components/ActiveOrchestrations";
 import WorkflowRunDetailDrawer from "./components/WorkflowRunDetailDrawer";
 import PublishedContentPanel, { type PublishedContentItem } from "./components/PublishedContentPanel";
+import PostDetailModal from "./components/PostDetailModal";
 import {
   RefreshCw,
   GitBranch,
@@ -246,6 +247,7 @@ export default function WorkflowsPage() {
   const [, setApprovalStats] = useState<ApprovalStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedRun, setSelectedRun] = useState<any>(null);
+  const [selectedPost, setSelectedPost] = useState<PublishedContentItem | null>(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -295,6 +297,7 @@ export default function WorkflowsPage() {
         (prev || []).filter((p) => !(p.id === item.id && p.source === item.source)),
       );
       setActive((prev) => prev.filter((o) => o.post?.id !== item.id));
+      setSelectedPost((prev) => (prev?.id === item.id && prev.source === item.source ? null : prev));
       try {
         const res = await api.delete(
           `/api/v1/agents/workflows/published-content/${item.id}?source=${item.source}`,
@@ -354,7 +357,8 @@ export default function WorkflowsPage() {
       <ControlStrip data={stats} posts={publishedContent} />
 
       {/* ── Published Content ── */}
-      <PublishedContentPanel data={publishedContent} onDelete={handleDeletePost} />
+      <PublishedContentPanel data={publishedContent} onDelete={handleDeletePost} onSelect={setSelectedPost} />
+      <PostDetailModal item={selectedPost} onClose={() => setSelectedPost(null)} />
 
       {/* ── Live Workflow Runs ── */}
       <ActiveOrchestrations

@@ -31,6 +31,9 @@ interface PublishResult {
   platform: string;
   error?: string;
   id?: string;
+  // Post-level ID when it differs from `id` (e.g. FB /photos returns a photo id plus post_id)
+  postId?: string;
+  kind?: 'video' | 'post';
 }
 
 /**
@@ -97,6 +100,26 @@ export class ExecutionService {
           ...(metaResult?.id ? { platform_post_id: metaResult.id } : {}),
         })
         .eq('id', intentId);
+
+      // 3b. Save every platform post ID so the Published Content view can fetch live metadata.
+      // Separate, non-fatal update: the status update above must not depend on this column existing.
+      const platformPosts = results
+        .map((r, i) => ({ r, account: accountList[i] }))
+        .filter(({ r }) => r.success && r.id)
+        .map(({ r, account }) => ({
+          platform: r.platform,
+          account_id: account.id,
+          post_id: r.postId || r.id,
+          ...(r.kind ? { kind: r.kind } : {}),
+          saved_at: new Date().toISOString(),
+        }));
+      if (platformPosts.length > 0) {
+        const { error: postsErr } = await supabaseAdmin
+          .from('publish_intents')
+          .update({ platform_posts: platformPosts })
+          .eq('id', intentId);
+        if (postsErr) logger.warn({ postsErr, intentId }, '[Execution] Saving platform_posts failed (non-fatal)');
+      }
 
       // 4. Auto-retire media vault record on full success.
       // Only the DB row is removed — the file stays in Supabase Storage so that
@@ -766,7 +789,7 @@ export class ExecutionService {
         const data = await response.json();
         if (data.error) throw new Error(data.error.message);
         logger.info(`[Execution] Facebook video posted: ${data.id}`);
-        return { success: true, platform: 'facebook', id: data.id };
+        return { success: true, platform: 'facebook', id: data.id, kind: 'video' };
       }
 
       // ── Multi-photo album (2+ images) ──────────────────────────────────────
@@ -815,7 +838,7 @@ export class ExecutionService {
       });
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
-      return { success: true, platform: 'facebook', id: data.id || data.post_id };
+      return { success: true, platform: 'facebook', id: data.id || data.post_id, postId: data.post_id };
     } catch (err: any) {
       return { success: false, platform: 'facebook', error: err.message };
     }
