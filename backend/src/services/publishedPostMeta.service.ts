@@ -39,6 +39,8 @@ export function isMetaPlatform(platform: unknown): platform is MetaPlatform {
 export interface PlatformPostRef {
   platform: string;
   account_id: string;
+  // Platform user id: unlike account_id it survives a disconnect + reconnect
+  account_handle?: string;
   post_id: string;
   kind?: 'video' | 'post';
   matched?: boolean;
@@ -92,6 +94,14 @@ interface MetaAccount {
   account_name: string | null;
   access_token: string;
 }
+
+/** An account to look the post up with. previousId: the deleted account id it stands in for. */
+interface AccountCandidate {
+  account: MetaAccount;
+  previousId: string | null;
+}
+
+const ACCOUNT_COLUMNS = 'id, platform, account_handle, account_name, access_token';
 
 type Json = Record<string, unknown>;
 
@@ -282,6 +292,49 @@ export async function findMetaPostByCaption(
 }
 
 /**
+ * A disconnect deletes the connected_accounts row and a reconnect inserts a new one,
+ * so an intent can hold account ids that no longer exist. For each such id, find the
+ * workspace accounts that may be its reconnected row: the one with the saved handle,
+ * else every account on the same platform (tried in order by the caller).
+ */
+async function findReconnectedAccounts(
+  workspaceId: string,
+  missingIds: string[],
+  stored: PlatformPostRef[],
+  intentPlatform: string | null,
+  liveIds: Set<string>,
+): Promise<AccountCandidate[][]> {
+  const { data, error } = await supabaseAdmin
+    .from('connected_accounts')
+    .select(ACCOUNT_COLUMNS)
+    .eq('workspace_id', workspaceId);
+  if (error) throw error;
+
+  const taken = new Set(liveIds);
+  const pool = ((data ?? []) as MetaAccount[]).filter((a) => isMetaPlatform(a.platform));
+  const hasOwnRef = (a: MetaAccount) => stored.some((r) => r.account_id === a.id);
+
+  const groups: AccountCandidate[][] = [];
+  for (const missingId of missingIds) {
+    const ref = stored.find((r) => r.account_id === missingId);
+    const platform = (ref?.platform ?? intentPlatform)?.toLowerCase();
+    if (!platform) continue;
+
+    const onPlatform = pool.filter((a) => a.platform.toLowerCase() === platform && !taken.has(a.id));
+    const matches = ref?.account_handle
+      ? onPlatform.filter((a) => a.account_handle === ref.account_handle)
+      // Accounts already re-linked to this post on an earlier view go first
+      : [...onPlatform].sort((a, b) => Number(hasOwnRef(b)) - Number(hasOwnRef(a)));
+    if (matches.length === 0) continue;
+
+    // A handle match is the same account, so no other dead id can claim it
+    if (ref?.account_handle) taken.add(matches[0].id);
+    groups.push(matches.map((account) => ({ account, previousId: missingId })));
+  }
+  return groups;
+}
+
+/**
  * Live Meta metadata for one published publish_intent, scoped to the workspace.
  * Returns null when the intent does not exist in this workspace.
  */
@@ -315,28 +368,42 @@ export async function getPublishedPostMeta(
 
   const { data: accountRows, error: accountsError } = await supabaseAdmin
     .from('connected_accounts')
-    .select('id, platform, account_handle, account_name, access_token')
+    .select(ACCOUNT_COLUMNS)
     .in('id', targetIds)
     .eq('workspace_id', workspaceId);
   if (accountsError) throw accountsError;
 
   const allAccounts = (accountRows ?? []) as MetaAccount[];
-  const accounts = allAccounts.filter((a) => isMetaPlatform(a.platform));
-  if (accounts.length === 0) {
+  const liveIds = new Set(allAccounts.map((a) => a.id));
+  const missingIds = targetIds.filter((id) => !liveIds.has(id));
+
+  // One group per target account: the live account, or the candidates for a deleted one
+  const groups: AccountCandidate[][] = allAccounts
+    .filter((a) => isMetaPlatform(a.platform))
+    .map((account) => [{ account, previousId: null }]);
+  if (missingIds.length > 0) {
+    groups.push(...await findReconnectedAccounts(workspaceId, missingIds, stored, intentPlatform, liveIds));
+  }
+  if (groups.length === 0) {
     return { status: allAccounts.length > 0 ? 'unsupported_platform' : 'no_account', platform: intentPlatform, posts: [] };
   }
 
   const newRefs: PlatformPostRef[] = [];
 
-  const posts = await Promise.all(accounts.map(async (account): Promise<PublishedPostMetaEntry> => {
+  const resolveEntry = async ({ account, previousId }: AccountCandidate): Promise<PublishedPostMetaEntry> => {
     const platform = account.platform.toLowerCase();
+    const handle = account.account_handle;
     const base = { platform, account_id: account.id, account_name: account.account_name ?? null };
     const fail = (err: string, postId: string | null = null): PublishedPostMetaEntry =>
       ({ ...base, post_id: postId, matched: false, meta: null, raw: null, error: err });
 
     if (!account.access_token) return fail('token_expired');
 
-    let ref = stored.find((r) => r.account_id === account.id && r.platform === platform) ?? null;
+    // Exact id first, so a ref already re-linked to this account is not re-saved on every view
+    let ref = stored.find((r) => r.platform === platform && r.account_id === account.id)
+      ?? stored.find((r) => r.platform === platform
+        && ((!!previousId && r.account_id === previousId) || (!!r.account_handle && r.account_handle === handle)))
+      ?? null;
     // Before platform_posts existed, FB/IG publishes saved one ID in platform_post_id.
     const isLegacy = !ref && !!legacyPostId && platform !== 'threads' && (!intentPlatform || intentPlatform === platform);
     if (isLegacy) ref = { platform, account_id: account.id, post_id: legacyPostId as string };
@@ -345,7 +412,10 @@ export async function getPublishedPostMeta(
       const result = await fetchMetaPost(platform, ref.post_id, account.access_token, ref.kind);
       // A legacy FB id can be a photo id that has no post fields: fall through to caption match.
       if (!result.error || result.error === 'token_expired' || !isLegacy) {
-        if (isLegacy && !result.error) newRefs.push({ ...ref, saved_at: new Date().toISOString() });
+        // Save a verified legacy id, or re-link a ref saved under a deleted account id
+        if (!result.error && (isLegacy || ref.account_id !== account.id)) {
+          newRefs.push({ ...ref, account_id: account.id, account_handle: handle, saved_at: new Date().toISOString() });
+        }
         return { ...base, post_id: ref.post_id, matched: !!ref.matched, ...result };
       }
     }
@@ -355,10 +425,31 @@ export async function getPublishedPostMeta(
     if (found.error) return fail(found.error);
     if (!found.id) return fail('not_found');
 
-    newRefs.push({ platform, account_id: account.id, post_id: found.id, matched: true, saved_at: new Date().toISOString() });
+    newRefs.push({
+      platform, account_id: account.id, account_handle: handle, post_id: found.id, matched: true, saved_at: new Date().toISOString(),
+    });
     const result = await fetchMetaPost(platform, found.id, account.access_token);
     return { ...base, post_id: found.id, matched: true, ...result };
+  };
+
+  // Try a group's candidates in order: first one that loads the post wins, else the first failure
+  const entries = await Promise.all(groups.map(async (candidates) => {
+    let firstFailure: PublishedPostMetaEntry | null = null;
+    for (const candidate of candidates) {
+      const entry = await resolveEntry(candidate);
+      if (!entry.error) return entry;
+      firstFailure ??= entry;
+    }
+    return firstFailure as PublishedPostMetaEntry;
   }));
+
+  // Two deleted ids can land on the same reconnected account: one entry per account, a loaded post preferred
+  const posts: PublishedPostMetaEntry[] = [];
+  for (const entry of entries) {
+    const i = posts.findIndex((p) => p.account_id === entry.account_id);
+    if (i === -1) posts.push(entry);
+    else if (posts[i].error && !entry.error) posts[i] = entry;
+  }
 
   if (newRefs.length > 0) {
     const { error: saveError } = await supabaseAdmin
@@ -369,5 +460,5 @@ export async function getPublishedPostMeta(
     if (saveError) logger.warn({ saveError, intentId }, '[post-meta] failed to save resolved platform_posts (non-fatal)');
   }
 
-  return { status: 'ok', platform: intentPlatform ?? accounts[0].platform.toLowerCase(), posts };
+  return { status: 'ok', platform: intentPlatform ?? posts[0].platform, posts };
 }
