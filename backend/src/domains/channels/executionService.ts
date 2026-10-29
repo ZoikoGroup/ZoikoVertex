@@ -109,6 +109,8 @@ export class ExecutionService {
         .map(({ r, account }) => ({
           platform: r.platform,
           account_id: account.id,
+          // account_id changes on disconnect + reconnect; the handle lets post details find the new row
+          account_handle: account.account_handle,
           post_id: r.postId || r.id,
           ...(r.kind ? { kind: r.kind } : {}),
           saved_at: new Date().toISOString(),

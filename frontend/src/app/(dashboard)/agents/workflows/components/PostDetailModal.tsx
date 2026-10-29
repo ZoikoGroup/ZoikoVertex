@@ -67,7 +67,7 @@ const STATUS_MESSAGES: Record<Exclude<PostMetaResponse["status"], "ok">, string>
   not_published: "This post hasn't been published yet, so there is no live post to show.",
   scheduled: "Live details appear once a scheduled post goes out.",
   unsupported_platform: "Live details are available for Threads, Instagram and Facebook posts only.",
-  no_account: "The account this post was published to is no longer connected.",
+  no_account: "The account this post was published to is no longer connected. Reconnect it to load live details.",
 };
 
 function entryErrorMessage(error: string, platform: string): string {

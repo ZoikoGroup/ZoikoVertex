@@ -321,4 +321,94 @@ describe('getPublishedPostMeta', () => {
       platform_posts: [expect.objectContaining({ platform: 'threads', account_id: 'a1', post_id: '555', matched: true })],
     });
   });
+
+  // A disconnect deletes the connected_accounts row and a reconnect inserts a new one with a new id
+  describe('after the account was disconnected and reconnected', () => {
+    const publishedIntent = (ref: Record<string, unknown>) => ({
+      id: 'i1', platform: 'threads', status: 'PUBLISHED', content: 'Hi', created_at: '2026-10-20T10:00:00Z',
+      target_account_ids: ['a1'], platform_post_id: null,
+      platform_posts: [{ platform: 'threads', account_id: 'a1', post_id: '179', ...ref }],
+    });
+
+    /** intent lookup, then: accounts by target id (none live), then all workspace accounts, then the ref save. */
+    function mockAccountQueries(workspaceAccounts: unknown[]) {
+      mockQueryBuilder.eq
+        .mockReturnValueOnce(mockQueryBuilder) // publish_intents .eq('id')
+        .mockReturnValueOnce(mockQueryBuilder) // publish_intents .eq('workspace_id')
+        .mockResolvedValueOnce({ data: [], error: null }) // connected_accounts by target id
+        .mockResolvedValueOnce({ data: workspaceAccounts, error: null }) // connected_accounts in workspace
+        .mockReturnValueOnce(mockQueryBuilder) // update .eq('id')
+        .mockResolvedValueOnce({ error: null }); // update .eq('workspace_id')
+    }
+
+    it('finds the reconnected account by its handle and loads the post', async () => {
+      mockQueryBuilder.maybeSingle.mockResolvedValueOnce({ data: publishedIntent({ account_handle: 'u1' }), error: null });
+      mockAccountQueries([
+        { id: 'a3', platform: 'threads', account_handle: 'u9', account_name: 'other', access_token: 'tok3' },
+        { id: 'a2', platform: 'threads', account_handle: 'u1', account_name: 'zoikovertex', access_token: 'tok2' },
+      ]);
+      respondWith({ id: '179', text: 'Hi', permalink: 'https://www.threads.net/@zoikovertex/post/a' });
+
+      const result = await getPublishedPostMeta('ws-1', 'i1');
+      expect(result?.status).toBe('ok');
+      expect(result?.posts).toHaveLength(1);
+      expect(result?.posts[0]).toMatchObject({ account_id: 'a2', account_name: 'zoikovertex', post_id: '179', error: null });
+      expect(result?.posts[0].meta?.permalink).toBe('https://www.threads.net/@zoikovertex/post/a');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toContain('access_token=tok2');
+      expect(mockQueryBuilder.update).toHaveBeenCalledWith({
+        platform_posts: expect.arrayContaining([
+          expect.objectContaining({ platform: 'threads', account_id: 'a2', account_handle: 'u1', post_id: '179' }),
+        ]),
+      });
+    });
+
+    it('uses the only account on the platform when the saved ref has no handle', async () => {
+      mockQueryBuilder.maybeSingle.mockResolvedValueOnce({ data: publishedIntent({}), error: null });
+      mockAccountQueries([
+        { id: 'fb1', platform: 'facebook', account_handle: 'p1', account_name: 'page', access_token: 'tokfb' },
+        { id: 'a2', platform: 'threads', account_handle: 'u1', account_name: 'zoikovertex', access_token: 'tok2' },
+      ]);
+      respondWith({ id: '179', text: 'Hi', permalink: 'https://www.threads.net/@zoikovertex/post/a' });
+
+      const result = await getPublishedPostMeta('ws-1', 'i1');
+      expect(result?.status).toBe('ok');
+      expect(result?.posts[0]).toMatchObject({ account_id: 'a2', post_id: '179', error: null });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toContain('https://graph.threads.net/v1.0/179?');
+    });
+
+    it('tries each account on the platform until one can load the post', async () => {
+      mockQueryBuilder.maybeSingle.mockResolvedValueOnce({ data: publishedIntent({}), error: null });
+      mockAccountQueries([
+        { id: 'a2', platform: 'threads', account_handle: 'u2', account_name: 'other', access_token: 'tok2' },
+        { id: 'a3', platform: 'threads', account_handle: 'u1', account_name: 'zoikovertex', access_token: 'tok3' },
+      ]);
+      respondWith(
+        { error: { message: 'Object does not exist', code: 100 } },
+        { id: '179', text: 'Hi', permalink: 'https://www.threads.net/@zoikovertex/post/a' },
+      );
+
+      const result = await getPublishedPostMeta('ws-1', 'i1');
+      expect(result?.posts).toHaveLength(1);
+      expect(result?.posts[0]).toMatchObject({ account_id: 'a3', post_id: '179', error: null });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('still returns no_account when the account was not reconnected', async () => {
+      mockQueryBuilder.maybeSingle.mockResolvedValueOnce({ data: publishedIntent({ account_handle: 'u1' }), error: null });
+      mockQueryBuilder.eq
+        .mockReturnValueOnce(mockQueryBuilder)
+        .mockReturnValueOnce(mockQueryBuilder)
+        .mockResolvedValueOnce({ data: [], error: null })
+        .mockResolvedValueOnce({
+          data: [{ id: 'ig1', platform: 'instagram', account_handle: 'u1', account_name: 'zoiko', access_token: 'tok' }],
+          error: null,
+        });
+
+      const result = await getPublishedPostMeta('ws-1', 'i1');
+      expect(result).toEqual({ status: 'no_account', platform: 'threads', posts: [] });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });
